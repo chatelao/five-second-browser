@@ -42,9 +42,9 @@ while time.monotonic() < deadline:
 sys.exit(1)
 PYEOF
 
-t0="$(python3 -c 'import time; print(int(time.monotonic()*1000))')"
+t0="$(date +%s%3N)"
 MOCK_MODE=1 PROXY_URL="http://127.0.0.1:${PORT}" "$NET_SCRIPT" --boot --state-dir "$TMP_DIR"
-t1="$(python3 -c 'import time; print(int(time.monotonic()*1000))')"
+t1="$(date +%s%3N)"
 elapsed=$((t1 - t0))
 
 if [[ "$elapsed" -ge 500 ]]; then

@@ -23,12 +23,12 @@
 Choose **either** the 100% portable USB/SD card image (leaves your internal hard drive untouched) **or** the internal-disk installer ISO:
 
 - **Option A — Run 100% from USB Stick or SD Card (Zero Internal Disk Changes):**
-  1. Download **`5s-browser-0.3.0-usb-sd-amd64.img.xz`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases).
+  1. Download **`5s-browser-0.3.1-usb-sd-amd64.img.xz`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases).
   2. Flash it directly to a USB stick or SD card (≥ 4 GB) using **BalenaEtcher**, **Rufus**, or **Raspberry Pi Imager** (they decompress `.img.xz` automatically).
   3. Insert the USB stick or SD card into your HP Mini, power on, and press **`F9`** to boot from it. Everything runs and persists directly on the USB/SD card.
 
 - **Option B — Install Permanently to Internal Hard Drive (`/dev/sda`):**
-  1. Download **`5s-browser-0.3.0-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
+  1. Download **`5s-browser-0.3.1-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
   2. Wait ~90 seconds while it automatically partitions `/dev/sda`, installs the system, and reboots.
 
 ### Step 2: Enter Wi-Fi Name + Password
@@ -52,4 +52,4 @@ Choose **either** the 100% portable USB/SD card image (leaves your internal hard
 - **Status Pill (Top Right):** `● Cached (Connecting...)` (instant local cache) → `● Live` (synced).
 - **Maintenance / Recovery Shell:** Hold `Shift` during power-on to open GRUB, press `e`, and change `init=/opt/5s-browser/bin/5s-init` to `init=/bin/bash`.
 
-*(Advanced users who already have Debian 12 `amd64` installed can alternatively install `5s-browser_0.1.0_amd64.deb` manually via `sudo dpkg -i 5s-browser_0.1.0_amd64.deb`.)*
+*(Advanced users who already have Debian 12 `amd64` installed can alternatively install `5s-browser_0.3.1_amd64.deb` manually via `sudo dpkg -i 5s-browser_0.3.1_amd64.deb`.)*

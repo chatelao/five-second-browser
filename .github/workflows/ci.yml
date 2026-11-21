@@ -42,7 +42,7 @@ jobs:
         with:
           name: 5s-browser-dist
           path: |
-            dist/5s-browser_0.1.0_amd64.deb
+            dist/5s-browser_*_amd64.deb
             dist/HOWTO.md
             dist/SHA256SUMS
 

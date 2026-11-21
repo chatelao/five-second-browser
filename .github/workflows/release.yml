@@ -17,14 +17,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build and packaging dependencies
+      - name: Install build, test, and packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl \
-            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools debian-archive-keyring parted xz-utils e2fsprogs
+            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools debian-archive-keyring parted xz-utils e2fsprogs \
+            qemu-system-x86 linux-image-virtual busybox-static cpio gzip
 
-      - name: Lint, build, test, package .deb, ISO, and USB/SD image
+      - name: Lint, build, test, QEMU boot check, and package assets
         run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            REL_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            REL_VERSION="$(tr -d '[:space:]' < VERSION)"
+          fi
+          export VERSION="$REL_VERSION"
           shellcheck scripts/*.sh src/*/*.sh tests/*.sh
           python3 -m py_compile src/proxy/cache_proxy.py tests/test_cache_proxy.py
           make build
@@ -32,8 +39,9 @@ jobs:
           make test
           make package
           bash tests/test_release_bundle.sh
-          sudo VERSION="${GITHUB_REF_NAME#v}" bash scripts/build_iso.sh
-          sudo VERSION="${GITHUB_REF_NAME#v}" bash scripts/build_usb_img.sh
+          REQUIRE_QEMU=1 bash tests/test_qemu_boot.sh
+          sudo VERSION="$REL_VERSION" bash scripts/build_iso.sh
+          sudo VERSION="$REL_VERSION" BASE_ROOTFS="$PWD/build/iso_work/rootfs" bash scripts/build_usb_img.sh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -42,6 +50,6 @@ jobs:
           files: |
             dist/*.img.xz
             dist/*.iso
-            dist/5s-browser_0.1.0_amd64.deb
+            dist/5s-browser_*_amd64.deb
             dist/HOWTO.md
             dist/SHA256SUMS

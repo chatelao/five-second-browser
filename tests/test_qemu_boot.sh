@@ -32,9 +32,10 @@ if [[ -z "$BUSYBOX_BIN" ]]; then
   exit 1
 fi
 
-DEB_FILE="$ROOT_DIR/dist/5s-browser_0.1.0_amd64.deb"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
+DEB_FILE="$ROOT_DIR/dist/5s-browser_${VERSION}_amd64.deb"
 if [[ ! -f "$DEB_FILE" ]]; then
-  make -s -C "$ROOT_DIR" package
+  VERSION="$VERSION" make -s -C "$ROOT_DIR" package
 fi
 
 TMP_DIR="$(mktemp -d)"

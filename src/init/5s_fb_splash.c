@@ -46,31 +46,11 @@ static int capture_frame(const char *fb_dev, const char *out_path) {
         return 1;
     }
 
-    unsigned char *buf = malloc(FRAME_BYTES);
-    if (!buf) {
-        close(fb_fd);
-        fprintf(stderr, "5s-fb-splash: out of memory\n");
-        return 1;
-    }
-
-    void *mapped = mmap(NULL, FRAME_BYTES, PROT_READ, MAP_SHARED, fb_fd, 0);
-    if (mapped != MAP_FAILED) {
-        memcpy(buf, mapped, FRAME_BYTES);
-        munmap(mapped, FRAME_BYTES);
-    } else {
-        if (read_all(fb_fd, buf, FRAME_BYTES) != 0) {
-            perror("5s-fb-splash: read fb");
-            free(buf);
-            close(fb_fd);
-            return 1;
-        }
-    }
-    close(fb_fd);
-
     size_t tmp_len = strlen(out_path) + 5;
     char *tmp_path = malloc(tmp_len);
     if (!tmp_path) {
-        free(buf);
+        close(fb_fd);
+        fprintf(stderr, "5s-fb-splash: out of memory\n");
         return 1;
     }
     snprintf(tmp_path, tmp_len, "%s.tmp", out_path);
@@ -79,22 +59,36 @@ static int capture_frame(const char *fb_dev, const char *out_path) {
     if (out_fd < 0) {
         perror("5s-fb-splash: open snapshot tmp");
         free(tmp_path);
-        free(buf);
+        close(fb_fd);
         return 1;
     }
 
-    if (write_all(out_fd, buf, FRAME_BYTES) != 0) {
+    int write_ok = 0;
+    void *mapped = mmap(NULL, FRAME_BYTES, PROT_READ, MAP_SHARED, fb_fd, 0);
+    if (mapped != MAP_FAILED) {
+        write_ok = (write_all(out_fd, mapped, FRAME_BYTES) == 0);
+        munmap(mapped, FRAME_BYTES);
+    } else {
+        unsigned char *buf = malloc(FRAME_BYTES);
+        if (buf) {
+            if (read_all(fb_fd, buf, FRAME_BYTES) == 0) {
+                write_ok = (write_all(out_fd, buf, FRAME_BYTES) == 0);
+            }
+            free(buf);
+        }
+    }
+    close(fb_fd);
+
+    if (!write_ok) {
         perror("5s-fb-splash: write snapshot");
         close(out_fd);
         unlink(tmp_path);
         free(tmp_path);
-        free(buf);
         return 1;
     }
 
     fsync(out_fd);
     close(out_fd);
-    free(buf);
 
     if (rename(tmp_path, out_path) != 0) {
         perror("5s-fb-splash: rename snapshot");
@@ -114,48 +108,49 @@ static int restore_frame(const char *fb_dev, const char *in_path) {
         return 1;
     }
 
-    unsigned char *buf = malloc(FRAME_BYTES);
-    if (!buf) {
+    int fb_fd = open(fb_dev, O_RDWR);
+    if (fb_fd < 0) {
+        perror("5s-fb-splash: open fb for restore");
         close(in_fd);
         return 1;
     }
 
     void *in_map = mmap(NULL, FRAME_BYTES, PROT_READ, MAP_PRIVATE, in_fd, 0);
-    if (in_map != MAP_FAILED) {
-        memcpy(buf, in_map, FRAME_BYTES);
-        munmap(in_map, FRAME_BYTES);
-    } else {
-        if (read_all(in_fd, buf, FRAME_BYTES) != 0) {
-            perror("5s-fb-splash: read snapshot");
-            free(buf);
-            close(in_fd);
-            return 1;
-        }
-    }
-    close(in_fd);
+    void *fb_map = mmap(NULL, FRAME_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
 
-    int fb_fd = open(fb_dev, O_RDWR);
-    if (fb_fd < 0) {
-        perror("5s-fb-splash: open fb for restore");
-        free(buf);
+    if (in_map != MAP_FAILED && fb_map != MAP_FAILED) {
+        memcpy(fb_map, in_map, FRAME_BYTES);
+        munmap(fb_map, FRAME_BYTES);
+        munmap(in_map, FRAME_BYTES);
+        close(fb_fd);
+        close(in_fd);
+        return 0;
+    }
+
+    if (in_map != MAP_FAILED) munmap(in_map, FRAME_BYTES);
+    if (fb_map != MAP_FAILED) munmap(fb_map, FRAME_BYTES);
+
+    unsigned char *buf = malloc(FRAME_BYTES);
+    if (!buf) {
+        close(fb_fd);
+        close(in_fd);
         return 1;
     }
 
-    void *fb_map = mmap(NULL, FRAME_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
-    if (fb_map != MAP_FAILED) {
-        memcpy(fb_map, buf, FRAME_BYTES);
-        munmap(fb_map, FRAME_BYTES);
-    } else {
-        if (lseek(fb_fd, 0, SEEK_SET) < 0 || write_all(fb_fd, buf, FRAME_BYTES) != 0) {
-            perror("5s-fb-splash: write fb");
-            free(buf);
-            close(fb_fd);
-            return 1;
+    int ok = 0;
+    if (read_all(in_fd, buf, FRAME_BYTES) == 0) {
+        if (lseek(fb_fd, 0, SEEK_SET) >= 0 && write_all(fb_fd, buf, FRAME_BYTES) == 0) {
+            ok = 1;
         }
     }
 
     free(buf);
     close(fb_fd);
+    close(in_fd);
+    if (!ok) {
+        perror("5s-fb-splash: restore fallback");
+        return 1;
+    }
     return 0;
 }
 

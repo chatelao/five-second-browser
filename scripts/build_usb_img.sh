@@ -4,16 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-VERSION="${VERSION:-0.3.0}"
-DEB_FILE="$ROOT_DIR/dist/5s-browser_0.1.0_amd64.deb"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
+DEB_FILE="$ROOT_DIR/dist/5s-browser_${VERSION}_amd64.deb"
 IMG_RAW="$ROOT_DIR/build/5s-browser-${VERSION}-usb-sd-amd64.img"
 IMG_XZ="$ROOT_DIR/dist/5s-browser-${VERSION}-usb-sd-amd64.img.xz"
 WORK_DIR="$ROOT_DIR/build/usb_work"
 MNT_DIR="$WORK_DIR/mnt"
 IMG_SIZE_MB="${IMG_SIZE_MB:-3200}"
+BASE_ROOTFS="${BASE_ROOTFS:-}"
 
 if [[ ! -f "$DEB_FILE" ]]; then
-  bash "$ROOT_DIR/scripts/build_release.sh"
+  VERSION="$VERSION" bash "$ROOT_DIR/scripts/build_release.sh"
 fi
 
 rm -rf "$WORK_DIR" "$IMG_RAW"
@@ -47,37 +48,47 @@ done
 mkfs.ext4 -F -L 5s-usb-root "$LOOP_PART"
 mount "$LOOP_PART" "$MNT_DIR"
 
-echo "2. Bootstrapping Debian 12 (bookworm) amd64 onto USB/SD image..."
-debootstrap \
-  --arch=amd64 \
-  --variant=minbase \
-  --include=linux-image-amd64,systemd-sysv,grub-pc,grub-pc-bin,e2fsprogs,kmod,udev,python3,lz4,curl,ca-certificates \
-  bookworm "$MNT_DIR" http://deb.debian.org/debian
+if [[ -n "$BASE_ROOTFS" && -d "$BASE_ROOTFS/opt/5s-browser" ]]; then
+  echo "2. Reusing pre-bootstrapped rootfs from $BASE_ROOTFS..."
+  cp -a "$BASE_ROOTFS/." "$MNT_DIR/"
+  rm -f "$MNT_DIR/etc/systemd/system/multi-user.target.wants/5s-autoinstall.service" \
+        "$MNT_DIR/etc/systemd/system/5s-autoinstall.service"
+  mount --bind /dev "$MNT_DIR/dev"
+  mount --bind /proc "$MNT_DIR/proc"
+  mount --bind /sys "$MNT_DIR/sys"
+else
+  echo "2. Bootstrapping Debian 12 (bookworm) amd64 onto USB/SD image..."
+  debootstrap \
+    --arch=amd64 \
+    --variant=minbase \
+    --include=linux-image-amd64,systemd-sysv,grub-pc,grub-pc-bin,e2fsprogs,kmod,udev,python3,lz4,curl,ca-certificates \
+    bookworm "$MNT_DIR" http://deb.debian.org/debian
 
-cat > "$MNT_DIR/etc/apt/sources.list" <<'EOF'
+  cat > "$MNT_DIR/etc/apt/sources.list" <<'EOF'
 deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
 deb http://deb.debian.org/debian-security bookworm-security main contrib non-free-firmware
 EOF
 
+  printf '#!/bin/sh\nexit 101\n' > "$MNT_DIR/usr/sbin/policy-rc.d"
+  chmod +x "$MNT_DIR/usr/sbin/policy-rc.d"
+
+  mount --bind /dev "$MNT_DIR/dev"
+  mount --bind /proc "$MNT_DIR/proc"
+  mount --bind /sys "$MNT_DIR/sys"
+
+  echo "3. Installing firmware-brcm80211, iwd, cage, chromium, and 5s-browser..."
+  chroot "$MNT_DIR" apt-get update
+  DEBIAN_FRONTEND=noninteractive chroot "$MNT_DIR" apt-get install -y --no-install-recommends \
+    firmware-brcm80211 iwd dhcpcd-base cage chromium
+  cp "$DEB_FILE" "$MNT_DIR/tmp/5s-browser.deb"
+  chroot "$MNT_DIR" dpkg -i /tmp/5s-browser.deb
+  rm -f "$MNT_DIR/tmp/5s-browser.deb" "$MNT_DIR/usr/sbin/policy-rc.d"
+  chroot "$MNT_DIR" apt-get clean
+fi
+
 cat > "$MNT_DIR/etc/fstab" <<'EOF'
 LABEL=5s-usb-root  /  ext4  defaults,noatime,commit=60  0  1
 EOF
-
-printf '#!/bin/sh\nexit 101\n' > "$MNT_DIR/usr/sbin/policy-rc.d"
-chmod +x "$MNT_DIR/usr/sbin/policy-rc.d"
-
-mount --bind /dev "$MNT_DIR/dev"
-mount --bind /proc "$MNT_DIR/proc"
-mount --bind /sys "$MNT_DIR/sys"
-
-echo "3. Installing firmware-brcm80211, iwd, cage, chromium, and 5s-browser..."
-chroot "$MNT_DIR" apt-get update
-DEBIAN_FRONTEND=noninteractive chroot "$MNT_DIR" apt-get install -y --no-install-recommends \
-  firmware-brcm80211 iwd dhcpcd-base cage chromium
-cp "$DEB_FILE" "$MNT_DIR/tmp/5s-browser.deb"
-chroot "$MNT_DIR" dpkg -i /tmp/5s-browser.deb
-rm -f "$MNT_DIR/tmp/5s-browser.deb" "$MNT_DIR/usr/sbin/policy-rc.d"
-chroot "$MNT_DIR" apt-get clean
 
 echo "4. Configuring GRUB2 for portable USB/SD boot (root=LABEL=5s-usb-root rootwait)..."
 mkdir -p "$MNT_DIR/etc/default/grub.d"
@@ -89,18 +100,15 @@ GRUB_DISABLE_OS_PROBER=true
 GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=0 mitigations=off i915.fastboot=1 video=LVDS-1:1024x600@60e vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
 EOF
 
-# Allow root=LABEL= resolution in initramfs and update GRUB
 chroot "$MNT_DIR" grub-install --target=i386-pc --recheck "$LOOP_DEV"
 chroot "$MNT_DIR" update-grub
 
 # Ensure initramfs includes usb-storage and mmc_block for USB/SD card boot
-cat >> "$MNT_DIR/etc/initramfs-tools/modules" <<'EOF'
-usb_storage
-uas
-mmc_block
-sdhci
-sdhci_pci
-EOF
+for mod in usb_storage uas mmc_block sdhci sdhci_pci; do
+  if ! grep -qx "$mod" "$MNT_DIR/etc/initramfs-tools/modules" 2>/dev/null; then
+    echo "$mod" >> "$MNT_DIR/etc/initramfs-tools/modules"
+  fi
+done
 chroot "$MNT_DIR" update-initramfs -u
 
 sync

@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 BUILD_BIN="$ROOT_DIR/build/bin"
 DEB_ROOT="$ROOT_DIR/build/deb_root"
 DIST_DIR="$ROOT_DIR/dist"
-VERSION="0.1.0"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
 DEB_NAME="5s-browser_${VERSION}_amd64.deb"
 
 rm -rf "$DEB_ROOT" "$DIST_DIR"

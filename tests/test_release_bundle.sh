@@ -2,13 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
 DIST_DIR="$ROOT_DIR/dist"
-DEB_FILE="$DIST_DIR/5s-browser_0.1.0_amd64.deb"
+DEB_FILE="$DIST_DIR/5s-browser_${VERSION}_amd64.deb"
 HOWTO_FILE="$DIST_DIR/HOWTO.md"
 SUMS_FILE="$DIST_DIR/SHA256SUMS"
 
 if [[ ! -s "$DEB_FILE" || ! -s "$HOWTO_FILE" || ! -s "$SUMS_FILE" ]]; then
-  make -s -C "$ROOT_DIR" package
+  VERSION="$VERSION" make -s -C "$ROOT_DIR" package
 fi
 
 [[ -s "$DEB_FILE" ]] || { echo "ERROR: missing $DEB_FILE"; exit 1; }
@@ -46,11 +47,11 @@ done
 [[ -f "$TMP_EXTRACT/usr/share/doc/5s-browser/HOWTO.md" ]] || { echo "ERROR: missing packaged HOWTO.md"; exit 1; }
 
 REQUIRED_DOC_STRINGS=(
-  "5s-browser-0.3.0-usb-sd-amd64.img.xz"
-  "5s-browser-0.3.0-amd64.iso"
+  "5s-browser-${VERSION}-usb-sd-amd64.img.xz"
+  "5s-browser-${VERSION}-amd64.iso"
   "Connect to Wi-Fi"
   "Connect & Start"
-  "5s-browser_0.1.0_amd64.deb"
+  "5s-browser_${VERSION}_amd64.deb"
   "F1"
   "F2"
 )

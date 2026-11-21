@@ -4,15 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-VERSION="${VERSION:-0.2.0}"
-DEB_FILE="$ROOT_DIR/dist/5s-browser_0.1.0_amd64.deb"
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
+DEB_FILE="$ROOT_DIR/dist/5s-browser_${VERSION}_amd64.deb"
 ISO_OUT="$ROOT_DIR/dist/5s-browser-${VERSION}-amd64.iso"
 WORK_DIR="$ROOT_DIR/build/iso_work"
 ROOTFS="$WORK_DIR/rootfs"
 ISO_DIR="$WORK_DIR/iso"
 
 if [[ ! -f "$DEB_FILE" ]]; then
-  bash "$ROOT_DIR/scripts/build_release.sh"
+  VERSION="$VERSION" bash "$ROOT_DIR/scripts/build_release.sh"
 fi
 
 rm -rf "$WORK_DIR"
