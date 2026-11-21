@@ -94,6 +94,8 @@ fi
 mkdir -p "$MNT_DIR/boot/efi"
 mount "$EFI_PART" "$MNT_DIR/boot/efi"
 
+echo "5s-browser" > "$MNT_DIR/etc/hostname"
+
 cat > "$MNT_DIR/etc/fstab" <<'EOF'
 LABEL=5s-usb-root  /          ext4  defaults,noatime,commit=60  0  1
 LABEL=5S-USB-EFI   /boot/efi  vfat  umask=0077                  0  2

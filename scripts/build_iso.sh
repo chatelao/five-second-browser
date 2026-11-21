@@ -52,6 +52,8 @@ chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
 chroot "$ROOTFS" apt-get clean
 
+echo "5s-browser" > "$ROOTFS/etc/hostname"
+
 mkdir -p "$ROOTFS/etc/default/grub.d"
 cp "$ROOTFS/opt/5s-browser/config/grub-5s.cfg" "$ROOTFS/etc/default/grub.d/5s-browser.cfg"
 cp "$ROOT_DIR/scripts/iso-autoinstall.sh" "$ROOTFS/opt/5s-browser/bin/iso-autoinstall.sh"
@@ -61,14 +63,19 @@ cat > "$ROOTFS/etc/systemd/system/5s-autoinstall.service" <<'EOF'
 [Unit]
 Description=5s-browser Unattended USB Installer
 After=local-fs.target
+Conflicts=getty@tty1.service
+Before=getty@tty1.service
 ConditionKernelCommandLine=5s_autoinstall=1
 
 [Service]
 Type=oneshot
 ExecStart=/opt/5s-browser/bin/iso-autoinstall.sh
+StandardInput=tty
 StandardOutput=tty
 StandardError=tty
 TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -103,8 +110,8 @@ cat > "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 set default=0
 set timeout=3
 
-menuentry "Install 5s-browser automatically to /dev/sda (HP Pavilion 3825U)" {
-    linux /live/vmlinuz boot=live components quiet 5s_autoinstall=1
+menuentry "Install 5s-browser automatically to internal disk (HP Pavilion 3825U)" {
+    linux /live/vmlinuz boot=live components loglevel=7 5s_autoinstall=1
     initrd /live/initrd.img
 }
 EOF
