@@ -142,10 +142,15 @@ INITRD_IMG="$TMP_DIR/initrd.cpio.gz"
   find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -1 > "$INITRD_IMG"
 )
 
+QEMU_CPU="qemu64,+ssse3,-sse4.1,-sse4.2,-avx"
+if command -v objdump >/dev/null 2>&1 && objdump -d "$BUSYBOX_BIN" | grep -qE '\bvmov'; then
+  QEMU_CPU="max"
+fi
+
 SERIAL_LOG="$TMP_DIR/serial.log"
-echo "Booting QEMU (Atom N550 ISA: -cpu qemu64,-sse4.1,-sse4.2,-avx -smp 4 -m 2048)..."
+echo "Booting QEMU (CPU: $QEMU_CPU, -smp 4 -m 2048)..."
 timeout 120s qemu-system-x86_64 \
-  -cpu qemu64,-sse4.1,-sse4.2,-avx \
+  -cpu "$QEMU_CPU" \
   -smp 4 \
   -m 2048 \
   -nographic \
