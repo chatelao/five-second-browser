@@ -22,13 +22,16 @@ echo "1. Bootstrapping minimal Debian 12 (bookworm) amd64 rootfs..."
 debootstrap \
   --arch=amd64 \
   --variant=minbase \
-  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,iwd,dhcpcd-base,cage,chromium,python3,lz4,curl,parted,e2fsprogs,squashfs-tools,kmod,udev \
+  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates \
   bookworm "$ROOTFS" http://deb.debian.org/debian
 
 cat > "$ROOTFS/etc/apt/sources.list" <<'EOF'
 deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
 deb http://deb.debian.org/debian-security bookworm-security main contrib non-free-firmware
 EOF
+
+printf '#!/bin/sh\nexit 101\n' > "$ROOTFS/usr/sbin/policy-rc.d"
+chmod +x "$ROOTFS/usr/sbin/policy-rc.d"
 
 mount --bind /dev "$ROOTFS/dev"
 mount --bind /proc "$ROOTFS/proc"
@@ -40,12 +43,13 @@ cleanup_mounts() {
 }
 trap cleanup_mounts EXIT
 
-echo "2. Installing Broadcom BCM4313 firmware and 5s-browser package..."
+echo "2. Installing Broadcom BCM4313 firmware, iwd, cage, chromium, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
-DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends firmware-brcm80211
+DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
+  firmware-brcm80211 iwd dhcpcd-base cage chromium
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
-rm -f "$ROOTFS/tmp/5s-browser.deb"
+rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
 chroot "$ROOTFS" apt-get clean
 
 mkdir -p "$ROOTFS/etc/default/grub.d"
