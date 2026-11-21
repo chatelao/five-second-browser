@@ -256,7 +256,14 @@ QEMU_CPU="qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,-avx,-avx2"
 OVMF_ARGS=()
 for fw in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
   if [[ -r "$fw" ]]; then
-    OVMF_ARGS=(-drive "if=pflash,format=raw,readonly=on,file=$fw")
+    OVMF_ARGS=(-machine q35 -drive "if=pflash,format=raw,readonly=on,file=$fw")
+    for vars in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd; do
+      if [[ -r "$vars" ]]; then
+        cp "$vars" "$TMP_DIR/OVMF_VARS.fd"
+        OVMF_ARGS+=(-drive "if=pflash,format=raw,file=$TMP_DIR/OVMF_VARS.fd")
+        break
+      fi
+    done
     break
   fi
 done
@@ -271,6 +278,7 @@ timeout 120s qemu-system-x86_64 \
   -device qemu-xhci \
   -vga std \
   -display none \
+  -net none \
   -serial stdio \
   -no-reboot \
   -kernel "$KERNEL_COPY" \
@@ -292,4 +300,5 @@ if [[ "${#OVMF_ARGS[@]}" -gt 0 ]] && grep -qF "REAL_EFIFB_IOCTL_FAIL" "$SERIAL_L
   exit 1
 fi
 
+grep -E "REAL_EFIFB_(IOCTL_OK|ABSENT)" "$SERIAL_LOG" || true
 echo "test_qemu_boot: Pentium 3825U strict no-AVX ISA + OVMF + 4-thread affinity (0,2 vs 1,3) + 1600x900 FB restore + clean poweroff verified"
