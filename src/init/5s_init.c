@@ -74,7 +74,9 @@ static pid_t spawn_pinned(int cpu_a, int cpu_b, int niceness, const char *path, 
         pin_cpus(cpu_a, cpu_b);
         if (niceness != 0) {
             errno = 0;
-            (void)nice(niceness);
+            if (nice(niceness) == -1 && errno != 0) {
+                /* Best-effort priority adjustment */
+            }
         }
         execv(path, argv);
         _exit(127);
