@@ -17,7 +17,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc make python3 lz4 dpkg-deb shellcheck binutils curl
+          sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl
 
       - name: Lint shell scripts and Python files
         run: |
@@ -63,7 +63,7 @@ jobs:
       - name: Install QEMU, Linux kernel, and initramfs tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 linux-image-virtual busybox-static cpio gzip dpkg-deb python3
+          sudo apt-get install -y qemu-system-x86 linux-image-virtual busybox-static cpio gzip dpkg python3
 
       - name: Run QEMU Atom N550 PID 1 boot & affinity test
         env:
