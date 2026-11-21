@@ -126,10 +126,12 @@ chmod 0755 \
   "$INITRD_ROOT/opt/5s-browser/bin/5s-browser-launch.sh" \
   "$INITRD_ROOT/opt/5s-browser/bin/5s-checkpoint.sh"
 
-# /init prepares the mock framebuffer file and execs 5s-init as PID 1
+# Pre-create zeroed 1,228,800-byte mock framebuffer file inside initramfs
+truncate -s 1228800 "$INITRD_ROOT/tmp/fb0"
+
+# /init exports FB_DEVICE and execs 5s-init as PID 1
 cat > "$INITRD_ROOT/init" <<'EOF'
 #!/bin/sh
-/bin/dd if=/dev/zero of=/tmp/fb0 bs=1228800 count=1 2>/dev/null
 export FB_DEVICE=/tmp/fb0
 export PATH=/bin:/sbin:/opt/5s-browser/bin
 exec /opt/5s-browser/bin/5s-init --state-dir /var/cache/5s
