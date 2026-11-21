@@ -22,7 +22,7 @@ PYEOF
 cp "$FB_MOCK" "$TMP_DIR/fb0.orig"
 
 now_ms() {
-  python3 -c 'import time; print(int(time.monotonic() * 1000))'
+  date +%s%3N
 }
 
 t0="$(now_ms)"
