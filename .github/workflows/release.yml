@@ -22,7 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl \
             debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools dosfstools debian-archive-keyring parted xz-utils e2fsprogs \
-            qemu-system-x86 linux-image-virtual busybox-static cpio gzip
+            qemu-system-x86 ovmf linux-image-virtual cpio gzip
 
       - name: Lint, build, test, QEMU boot check, and package assets
         run: |
@@ -42,6 +42,7 @@ jobs:
           REQUIRE_QEMU=1 bash tests/test_qemu_boot.sh
           sudo VERSION="$REL_VERSION" bash scripts/build_iso.sh
           sudo VERSION="$REL_VERSION" BASE_ROOTFS="$PWD/build/iso_work/rootfs" bash scripts/build_usb_img.sh
+          sudo REQUIRE_QEMU=1 bash tests/test_qemu_usb_uefi.sh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

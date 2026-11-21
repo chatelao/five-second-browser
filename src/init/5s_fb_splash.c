@@ -138,6 +138,11 @@ static int restore_frame(const char *fb_dev, const char *in_path) {
     }
 
     size_t frame_bytes = detect_frame_bytes(fb_fd, in_fd);
+    struct stat in_st;
+    if (fstat(in_fd, &in_st) == 0 && S_ISREG(in_st.st_mode) && in_st.st_size > 0 &&
+        (size_t)in_st.st_size < frame_bytes) {
+        frame_bytes = (size_t)in_st.st_size;
+    }
 
     void *in_map = mmap(NULL, frame_bytes, PROT_READ, MAP_PRIVATE, in_fd, 0);
     void *fb_map = mmap(NULL, frame_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
