@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make python3 lz4 dpkg-deb shellcheck binutils curl
+
+      - name: Lint shell scripts and Python files
+        run: |
+          shellcheck scripts/*.sh src/*/*.sh tests/*.sh
+          python3 -m py_compile src/proxy/cache_proxy.py tests/test_cache_proxy.py
+
+      - name: Build and verify Bonnell ISA compatibility
+        run: |
+          make build
+          make check-isa
+
+      - name: Run test suite
+        run: make test
+
+      - name: Package release assets and verify bundle
+        run: |
+          make package
+          bash tests/test_release_bundle.sh
+
+      - name: Upload CI build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 5s-browser-dist
+          path: |
+            dist/5s-browser_0.1.0_amd64.deb
+            dist/HOWTO.md
+            dist/SHA256SUMS
+
+  qemu-boot-test:
+    needs: build-test-package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: 5s-browser-dist
+          path: dist
+
+      - name: Install QEMU, Linux kernel, and initramfs tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 linux-image-virtual busybox-static cpio gzip dpkg-deb python3
+
+      - name: Run QEMU Atom N550 PID 1 boot & affinity test
+        env:
+          REQUIRE_QEMU: "1"
+        run: bash tests/test_qemu_boot.sh

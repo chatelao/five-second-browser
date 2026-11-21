@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${STATE_DIR:-/var/cache/5s}"
+PROXY_URL="${PROXY_URL:-http://127.0.0.1:8555}"
+MOCK_MODE="${MOCK_MODE:-0}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --state-dir)
+      STATE_DIR="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
+
+# Wait for local SQLite WAL proxy to accept connections
+for _ in $(seq 1 100); do
+  if curl -fsS -m 1 "${PROXY_URL}/__5s__/status" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.01
+done
+
+if [[ "$MOCK_MODE" == "1" ]]; then
+  curl -fsS -m 2 "${PROXY_URL}/app" > "$STATE_DIR/browser_app.html"
+  python3 -c 'import time; print(int(time.monotonic()*1000))' > "$STATE_DIR/browser_ready.ts"
+  while true; do
+    sleep 1
+  done
+fi
+
+CHROMIUM_FLAGS=(
+  "--app=${PROXY_URL}/app"
+  "--kiosk"
+  "--window-size=1024,600"
+  "--no-first-run"
+  "--no-default-browser-check"
+  "--disable-gpu"
+  "--disable-gpu-compositing"
+  "--renderer-process-limit=2"
+  "--process-per-site"
+  "--js-flags=--max-old-space-size=384"
+  "--v8-cache-options=code"
+  "--disk-cache-dir=${STATE_DIR}/chromium_cache"
+  "--user-data-dir=${STATE_DIR}/chromium_profile"
+  "--disable-extensions"
+  "--disable-component-update"
+  "--disable-background-networking"
+  "--disable-sync"
+  "--disable-translate"
+  "--disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
+  "--enable-low-end-device-mode"
+)
+
+exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

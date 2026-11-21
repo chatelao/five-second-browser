@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make python3 lz4 dpkg-deb shellcheck binutils curl
+
+      - name: Lint, build, test, and package
+        run: |
+          shellcheck scripts/*.sh src/*/*.sh tests/*.sh
+          python3 -m py_compile src/proxy/cache_proxy.py tests/test_cache_proxy.py
+          make build
+          make check-isa
+          make test
+          make package
+          bash tests/test_release_bundle.sh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: dist/HOWTO.md
+          files: |
+            dist/5s-browser_0.1.0_amd64.deb
+            dist/HOWTO.md
+            dist/SHA256SUMS
