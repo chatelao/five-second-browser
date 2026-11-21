@@ -60,4 +60,14 @@ CHROMIUM_FLAGS=(
   "--disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
 )
 
+if [[ "$(id -u)" -eq 0 ]]; then
+  CHROMIUM_FLAGS+=("--no-sandbox")
+fi
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export XDG_VTNR="${XDG_VTNR:-1}"
+export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-builtin}"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
 exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

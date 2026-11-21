@@ -85,6 +85,7 @@ static pid_t spawn_pinned(int cpu_a, int cpu_b, int niceness, const char *path, 
 }
 
 static void setup_pid1_mounts(const char *bin_dir) {
+    setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
     mkdir("/proc", 0755);
     mkdir("/sys", 0755);
     mkdir("/dev", 0755);
@@ -92,6 +93,10 @@ static void setup_pid1_mounts(const char *bin_dir) {
     (void)mount("proc", "/proc", "proc", 0, NULL);
     (void)mount("sysfs", "/sys", "sysfs", 0, NULL);
     (void)mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
+    mkdir("/dev/pts", 0755);
+    mkdir("/dev/shm", 01777);
+    (void)mount("devpts", "/dev/pts", "devpts", 0, NULL);
+    (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
     (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
 

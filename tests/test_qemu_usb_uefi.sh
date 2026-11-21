@@ -117,7 +117,7 @@ if ! grep -q "root=LABEL=5s-usb-root" "$MNT_DIR/boot/grub/grub.cfg"; then
 fi
 
 # Enable serial console logging ONLY on the temporary test image copy
-sed -i 's/quiet loglevel=0/loglevel=6 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
+sed -i 's/quiet loglevel=0/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
 sync
 
 umount "$MNT_DIR/boot/efi"
@@ -159,7 +159,7 @@ while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     break
   fi
-  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init" "$SERIAL_LOG" 2>/dev/null; then
+  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set" "$SERIAL_LOG" 2>/dev/null; then
     echo "ERROR: Fatal kernel/PID 1 failure detected during USB UEFI boot:" >&2
     tail -n 60 "$SERIAL_LOG" >&2 || true
     exit 1
@@ -167,8 +167,14 @@ while (( SECONDS < DEADLINE )); do
   if grep -q "init=/opt/5s-browser/bin/5s-init" "$SERIAL_LOG" 2>/dev/null; then
     BOOTED_KERNEL=1
   fi
-  if grep -qE "zram0: detected capacity change|Adding .* swap on /dev/zram0" "$SERIAL_LOG" 2>/dev/null; then
+  if grep -qE "zram0: (detected capacity change|configured)|Adding .* swap on /dev/zram0" "$SERIAL_LOG" 2>/dev/null; then
     RAN_ZRAM_INIT=1
+    sleep 3
+    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set" "$SERIAL_LOG" 2>/dev/null; then
+      echo "ERROR: Fatal kernel/PID 1 failure detected after init:" >&2
+      tail -n 60 "$SERIAL_LOG" >&2 || true
+      exit 1
+    fi
     break
   fi
   sleep 1
