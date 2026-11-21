@@ -2,13 +2,16 @@
 #include <errno.h>
 #include <libgen.h>
 #include <limits.h>
+#include <net/if.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -92,6 +95,19 @@ static int is_submount(const char *path, const char *parent) {
     return st_path.st_dev != st_parent.st_dev;
 }
 
+static void bring_up_loopback(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return;
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "lo");
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) {
+        ifr.ifr_flags |= IFF_UP;
+        (void)ioctl(fd, SIOCSIFFLAGS, &ifr);
+    }
+    close(fd);
+}
+
 static void setup_pid1_mounts(const char *bin_dir) {
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
     mkdir("/proc", 0755);
@@ -107,6 +123,7 @@ static void setup_pid1_mounts(const char *bin_dir) {
     if (!is_submount("/dev/shm", "/dev")) (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
     if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
+    bring_up_loopback();
 
     if (access("/lib/systemd/systemd-udevd", X_OK) == 0) {
         char *udevd_argv[] = {"/lib/systemd/systemd-udevd", "--daemon", NULL};

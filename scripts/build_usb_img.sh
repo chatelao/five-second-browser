@@ -84,7 +84,7 @@ EOF
   echo "3. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, cage, chromium, and 5s-browser..."
   chroot "$MNT_DIR" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$MNT_DIR" apt-get install -y --no-install-recommends \
-    firmware-iwlwifi firmware-brcm80211 i965-va-driver iwd dhcpcd-base cage chromium
+    firmware-iwlwifi firmware-brcm80211 wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base cage chromium
   cp "$DEB_FILE" "$MNT_DIR/tmp/5s-browser.deb"
   chroot "$MNT_DIR" dpkg -i /tmp/5s-browser.deb
   rm -f "$MNT_DIR/tmp/5s-browser.deb" "$MNT_DIR/usr/sbin/policy-rc.d"
@@ -108,7 +108,7 @@ GRUB_DEFAULT=0
 GRUB_TIMEOUT=2
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait loglevel=7 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait loglevel=7 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,snd_hda_intel init=/opt/5s-browser/bin/5s-init"
 EOF
 
 chroot "$MNT_DIR" grub-install --target=i386-pc --recheck "$LOOP_DEV"

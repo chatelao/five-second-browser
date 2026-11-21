@@ -162,6 +162,10 @@ do_boot() {
   fi
 
   notify_proxy_online
+
+  if [[ "$MOCK_MODE" != "1" ]] && command -v modprobe >/dev/null 2>&1; then
+    (sleep 2; modprobe snd_hda_intel >/dev/null 2>&1 || true) &
+  fi
 }
 
 do_connect() {

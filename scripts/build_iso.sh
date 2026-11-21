@@ -46,7 +46,7 @@ trap cleanup_mounts EXIT
 echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, cage, chromium, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-iwlwifi firmware-brcm80211 i965-va-driver iwd dhcpcd-base cage chromium
+  firmware-iwlwifi firmware-brcm80211 wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base cage chromium
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"

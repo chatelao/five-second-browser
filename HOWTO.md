@@ -23,12 +23,12 @@
 Choose **either** the 100% portable USB 3.0 / SD card image (leaves your internal drive untouched) **or** the internal-disk installer ISO:
 
 - **Option A — Run 100% from USB 3.0 Stick or SD Card (Zero Internal Disk Changes):**
-  1. Download **`5s-browser-0.4.3-usb-sd-amd64.img.xz`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases).
+  1. Download **`5s-browser-0.4.4-usb-sd-amd64.img.xz`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases).
   2. Flash it directly to a USB 3.0 stick (recommended for ~2.5 s cold boot) or SD card (≥ 4 GB) using **BalenaEtcher**, **Rufus**, or **Raspberry Pi Imager** (they decompress `.img.xz` automatically).
   3. Insert the USB stick into a **SuperSpeed USB 3.0 port** (or insert the SD card), power on, and press **`F9`** to select it in the HP Boot Menu. *(Supports both UEFI `F.77` and Legacy Boot modes; disable Secure Boot in `F10` BIOS Setup if prompted.)*
 
 - **Option B — Install Permanently to Internal Drive (`/dev/sda`):**
-  1. Download **`5s-browser-0.4.3-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
+  1. Download **`5s-browser-0.4.4-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
   2. Wait ~60–90 seconds while it automatically partitions `/dev/sda` (UEFI ESP + ext4), installs Debian 12 + `firmware-iwlwifi` + `i965-va-driver` + `cage` + `chromium` + `5s-browser`, and **reboots automatically**.
 
 ### Step 2: Enter Wi-Fi Name + Password
@@ -52,4 +52,4 @@ Choose **either** the 100% portable USB 3.0 / SD card image (leaves your interna
 - **Status Pill (Top Right):** `● Cached (Connecting...)` (instant local cache) → `● Live` (synced).
 - **Maintenance / Recovery Shell:** Hold `Shift` (or `Esc`) during power-on to open GRUB, press `e`, and change `init=/opt/5s-browser/bin/5s-init` to `init=/bin/bash`.
 
-*(Advanced users who already have Debian 12 `amd64` installed can alternatively install `5s-browser_0.4.3_amd64.deb` manually via `sudo dpkg -i 5s-browser_0.4.3_amd64.deb`.)*
+*(Advanced users who already have Debian 12 `amd64` installed can alternatively install `5s-browser_0.4.4_amd64.deb` manually via `sudo dpkg -i 5s-browser_0.4.4_amd64.deb`.)*
