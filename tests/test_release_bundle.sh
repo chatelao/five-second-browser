@@ -46,11 +46,10 @@ done
 [[ -f "$TMP_EXTRACT/usr/share/doc/5s-browser/HOWTO.md" ]] || { echo "ERROR: missing packaged HOWTO.md"; exit 1; }
 
 REQUIRED_DOC_STRINGS=(
-  "firmware-brcm80211"
-  "dpkg -i 5s-browser_0.1.0_amd64.deb"
-  "iwctl station wlan0 connect"
-  "5s-checkpoint.sh --shutdown"
-  "update-grub"
+  "5s-browser-0.2.0-amd64.iso"
+  "Connect to Wi-Fi"
+  "Connect & Start"
+  "5s-browser_0.1.0_amd64.deb"
   "F1"
   "F2"
 )

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ACTION=""
+CONNECT_SSID=""
 STATE_DIR="${STATE_DIR:-/var/cache/5s}"
 WLAN_IF="${WLAN_IF:-wlan0}"
 PROXY_URL="${PROXY_URL:-http://127.0.0.1:8555}"
@@ -16,6 +17,11 @@ while [[ $# -gt 0 ]]; do
     --shutdown)
       ACTION="shutdown"
       shift
+      ;;
+    --connect)
+      ACTION="connect"
+      CONNECT_SSID="$2"
+      shift 2
       ;;
     --state-dir)
       STATE_DIR="$2"
@@ -146,6 +152,25 @@ do_boot() {
   notify_proxy_online
 }
 
+do_connect() {
+  if [[ -z "$CONNECT_SSID" ]]; then
+    echo "ERROR: --connect requires an SSID" >&2
+    exit 2
+  fi
+  if [[ "$MOCK_MODE" != "1" ]]; then
+    ip link set "$WLAN_IF" up 2>/dev/null || true
+    if command -v iwctl >/dev/null 2>&1; then
+      iwctl station "$WLAN_IF" connect "$CONNECT_SSID" || true
+    fi
+    if command -v dhcpcd >/dev/null 2>&1; then
+      dhcpcd -4 -q --noarp "$WLAN_IF" || true
+    fi
+  fi
+  do_shutdown
+  merge_hosts_cache
+  notify_proxy_online
+}
+
 case "$ACTION" in
   shutdown)
     do_shutdown
@@ -153,8 +178,11 @@ case "$ACTION" in
   boot)
     do_boot
     ;;
+  connect)
+    do_connect
+    ;;
   *)
-    echo "Usage: $0 --boot|--shutdown [--state-dir <dir>]" >&2
+    echo "Usage: $0 --boot|--shutdown|--connect <ssid> [--state-dir <dir>]" >&2
     exit 2
     ;;
 esac

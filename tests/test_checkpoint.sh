@@ -19,6 +19,7 @@ STATE_DIR="$TMP_DIR/state"
 FB_MOCK="$TMP_DIR/fb0"
 BIN_DIR="$ROOT_DIR/build/bin"
 mkdir -p "$STATE_DIR"
+touch "$STATE_DIR/wifi_configured"
 
 # Seed mock 1,228,800-byte framebuffer
 python3 - "$FB_MOCK" <<'PYEOF'

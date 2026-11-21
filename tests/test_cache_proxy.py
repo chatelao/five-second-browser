@@ -63,12 +63,34 @@ def main() -> None:
         up_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         up_thread.start()
 
-        # 1. Start proxy online and seed cache
+        # 1. Start proxy online: verify first-run Wi-Fi setup screen, submit SSID+password, then seed cache
+        env = os.environ.copy()
+        env["MOCK_MODE"] = "1"
         proc = subprocess.Popen(
-            [sys.executable, proxy_script, "--state-dir", tmp_dir, "--port", str(proxy_port)]
+            [sys.executable, proxy_script, "--state-dir", tmp_dir, "--port", str(proxy_port)],
+            env=env,
         )
         try:
             wait_port(proxy_port)
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app") as resp:
+                setup_html = resp.read().decode("utf-8")
+                assert resp.getcode() == 200
+                assert "Connect to Wi-Fi" in setup_html
+
+            wifi_req = urllib.request.Request(
+                f"http://127.0.0.1:{proxy_port}/__5s__/wifi-setup",
+                data=json.dumps({"ssid": "TestNet", "password": "secret-pass"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(wifi_req) as resp:
+                wifi_res = json.loads(resp.read().decode("utf-8"))
+                assert resp.getcode() == 200 and wifi_res.get("ok") is True
+
+            assert os.path.exists(os.path.join(tmp_dir, "wifi_configured"))
+            assert os.path.exists(os.path.join(tmp_dir, "iwd", "TestNet.psk"))
+
             gmail_url = f"http://127.0.0.1:{upstream_port}/gmail"
             yt_url = f"http://127.0.0.1:{upstream_port}/youtube"
 
