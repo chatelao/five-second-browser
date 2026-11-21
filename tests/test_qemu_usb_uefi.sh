@@ -117,7 +117,7 @@ if ! grep -q "root=LABEL=5s-usb-root" "$MNT_DIR/boot/grub/grub.cfg"; then
 fi
 
 # Enable serial console logging ONLY on the temporary test image copy
-sed -i 's/quiet loglevel=0/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
+sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
 sync
 
 umount "$MNT_DIR/boot/efi"

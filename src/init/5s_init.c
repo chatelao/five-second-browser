@@ -84,21 +84,40 @@ static pid_t spawn_pinned(int cpu_a, int cpu_b, int niceness, const char *path, 
     return pid;
 }
 
+static int is_submount(const char *path, const char *parent) {
+    struct stat st_path, st_parent;
+    if (stat(path, &st_path) != 0 || stat(parent, &st_parent) != 0) {
+        return 0;
+    }
+    return st_path.st_dev != st_parent.st_dev;
+}
+
 static void setup_pid1_mounts(const char *bin_dir) {
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
     mkdir("/proc", 0755);
     mkdir("/sys", 0755);
     mkdir("/dev", 0755);
     mkdir("/run", 0755);
-    (void)mount("proc", "/proc", "proc", 0, NULL);
-    (void)mount("sysfs", "/sys", "sysfs", 0, NULL);
-    (void)mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
+    if (!is_submount("/proc", "/")) (void)mount("proc", "/proc", "proc", 0, NULL);
+    if (!is_submount("/sys", "/")) (void)mount("sysfs", "/sys", "sysfs", 0, NULL);
+    if (!is_submount("/dev", "/")) (void)mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
     mkdir("/dev/pts", 0755);
     mkdir("/dev/shm", 01777);
-    (void)mount("devpts", "/dev/pts", "devpts", 0, NULL);
-    (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
-    (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
+    if (!is_submount("/dev/pts", "/dev")) (void)mount("devpts", "/dev/pts", "devpts", 0, NULL);
+    if (!is_submount("/dev/shm", "/dev")) (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
+    if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
+
+    if (access("/lib/systemd/systemd-udevd", X_OK) == 0) {
+        char *udevd_argv[] = {"/lib/systemd/systemd-udevd", "--daemon", NULL};
+        (void)run_sync_cmd("/lib/systemd/systemd-udevd", udevd_argv);
+        if (access("/usr/bin/udevadm", X_OK) == 0) {
+            char *trig_sub_argv[] = {"/usr/bin/udevadm", "trigger", "--type=subsystems", "--action=add", NULL};
+            char *trig_dev_argv[] = {"/usr/bin/udevadm", "trigger", "--type=devices", "--action=add", NULL};
+            (void)run_sync_cmd("/usr/bin/udevadm", trig_sub_argv);
+            (void)run_sync_cmd("/usr/bin/udevadm", trig_dev_argv);
+        }
+    }
 
     char zram_path[PATH_MAX + 64];
     snprintf(zram_path, sizeof(zram_path), "%s/zram-setup.sh", bin_dir);
@@ -188,6 +207,13 @@ int main(int argc, char **argv) {
             if (exited == browser_pid) {
                 browser_pid = -1;
                 if (!test_mode) {
+                    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                        fprintf(stderr, "5s-init: browser exited with code %d\n", WEXITSTATUS(status));
+                        sleep(10);
+                    } else if (WIFSIGNALED(status)) {
+                        fprintf(stderr, "5s-init: browser killed by signal %d\n", WTERMSIG(status));
+                        sleep(10);
+                    }
                     g_shutdown_requested = 1;
                 }
             } else if (exited == proxy_pid) {

@@ -70,4 +70,11 @@ export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-builtin}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
+for _ in $(seq 1 100); do
+  if [[ -e /dev/dri/card0 ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
 exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

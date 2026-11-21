@@ -78,6 +78,16 @@ mkdir -p "$ROOTFS/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/5s-autoinstall.service \
   "$ROOTFS/etc/systemd/system/multi-user.target.wants/5s-autoinstall.service"
 
+if [[ -f "$ROOTFS/usr/share/initramfs-tools/scripts/init-top/udev" ]]; then
+  mkdir -p "$ROOTFS/etc/initramfs-tools/scripts/init-top"
+  cp "$ROOTFS/usr/share/initramfs-tools/scripts/init-top/udev" \
+     "$ROOTFS/etc/initramfs-tools/scripts/init-top/udev"
+  sed -i 's/udevadm settle/udevadm settle --timeout=5/g' \
+     "$ROOTFS/etc/initramfs-tools/scripts/init-top/udev"
+  chmod +x "$ROOTFS/etc/initramfs-tools/scripts/init-top/udev"
+  chroot "$ROOTFS" update-initramfs -u
+fi
+
 cleanup_mounts
 trap - EXIT
 

@@ -103,15 +103,26 @@ echo "4. Installing hybrid UEFI + Legacy BIOS GRUB2 for USB 3.0 & SD Card boot..
 mkdir -p "$MNT_DIR/etc/default/grub.d"
 cat > "$MNT_DIR/etc/default/grub.d/5s-browser.cfg" <<'EOF'
 GRUB_DEFAULT=0
-GRUB_TIMEOUT=0
+GRUB_TIMEOUT=2
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=0 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait loglevel=7 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
 EOF
 
 chroot "$MNT_DIR" grub-install --target=i386-pc --recheck "$LOOP_DEV"
 chroot "$MNT_DIR" grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
 chroot "$MNT_DIR" update-grub
+
+# Cap initramfs udevadm settle to 5s so a stalled non-boot device (e.g. optical/SATA/card reader)
+# cannot block USB root boot for 120 seconds ("Timed out waiting for udev queue being empty")
+if [[ -f "$MNT_DIR/usr/share/initramfs-tools/scripts/init-top/udev" ]]; then
+  mkdir -p "$MNT_DIR/etc/initramfs-tools/scripts/init-top"
+  cp "$MNT_DIR/usr/share/initramfs-tools/scripts/init-top/udev" \
+     "$MNT_DIR/etc/initramfs-tools/scripts/init-top/udev"
+  sed -i 's/udevadm settle/udevadm settle --timeout=5/g' \
+     "$MNT_DIR/etc/initramfs-tools/scripts/init-top/udev"
+  chmod +x "$MNT_DIR/etc/initramfs-tools/scripts/init-top/udev"
+fi
 
 # Ensure initramfs includes USB 3.0 (xHCI) & Realtek PCIe SD card reader modules
 for mod in xhci_pci xhci_hcd usb_storage uas rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci; do
