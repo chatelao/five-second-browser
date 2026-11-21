@@ -145,17 +145,17 @@ INITRD_IMG="$TMP_DIR/initrd.cpio.gz"
   find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -1 > "$INITRD_IMG"
 )
 
-QEMU_CPU="qemu64,+ssse3,-sse4.1,-sse4.2,-avx"
+QEMU_CPU="qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,-avx,-avx2"
 if command -v objdump >/dev/null 2>&1 && objdump -d "$BUSYBOX_BIN" | grep -qE '\bvmov'; then
   QEMU_CPU="max"
 fi
 
 SERIAL_LOG="$TMP_DIR/serial.log"
-echo "Booting QEMU (CPU: $QEMU_CPU, -smp 4 -m 2048)..."
+echo "Booting QEMU (CPU: $QEMU_CPU, -smp 4 -m 4096)..."
 timeout 120s qemu-system-x86_64 \
   -cpu "$QEMU_CPU" \
   -smp 4 \
-  -m 2048 \
+  -m 4096 \
   -nographic \
   -no-reboot \
   -kernel "$KERNEL_COPY" \
@@ -171,4 +171,4 @@ for marker in "TRACK_A_CPUS=0,2" "TRACK_B_CPUS=1,3" "FB_RESTORE_OK" "QEMU_5S_SHU
   fi
 done
 
-echo "test_qemu_boot: Atom N550 ISA + 4-thread affinity (0,2 vs 1,3) + PID 1 FB restore + clean poweroff verified"
+echo "test_qemu_boot: Pentium 3825U ISA + 4-thread affinity (0,2 vs 1,3) + PID 1 FB restore + clean poweroff verified"

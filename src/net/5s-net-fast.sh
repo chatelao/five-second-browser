@@ -4,9 +4,21 @@ set -euo pipefail
 ACTION=""
 CONNECT_SSID=""
 STATE_DIR="${STATE_DIR:-/var/cache/5s}"
-WLAN_IF="${WLAN_IF:-wlan0}"
 PROXY_URL="${PROXY_URL:-http://127.0.0.1:8555}"
 MOCK_MODE="${MOCK_MODE:-0}"
+
+detect_wlan_if() {
+  local cand
+  for cand in /sys/class/net/wl*; do
+    if [[ -e "$cand" ]]; then
+      basename "$cand"
+      return 0
+    fi
+  done
+  echo "wlan0"
+}
+
+WLAN_IF="${WLAN_IF:-$(detect_wlan_if)}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

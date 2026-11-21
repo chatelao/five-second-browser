@@ -1,12 +1,13 @@
 # Five-Second Browser Concept (`5s-browser`)
 
-**Target Hardware (Locked Single-Target Baseline: HP Mini 210-2000 Series):**  
-- **CPU:** Intel Atom N550 ("Pineview-M", 45nm, **2 physical cores / 4 threads** `cpu0..cpu3` @ 1.50 GHz, 2×512 KB L2 cache, 64-bit `x86_64`, `SSSE3` + `MOVBE`, no `SSE4.1+`)  
-- **RAM:** **2 GB DDR3** (single 2048 MB SODIMM @ 667 MHz) + **512 MB 4-stream LZ4 `zram0`**  
-- **GPU & Display:** Intel GMA 3150 (`8086:a011`, `i915` KMS driver, OpenGL 1.4, no hardware video decode) driving a 10.1" **1024×600** 16-bit RGB565 LVDS panel (`LVDS-1`, `/dev/fb0` = `1,228,800` bytes)  
-- **Storage:** 2.5" SATA II drive on Intel NM10 Express (`ahci`, `/dev/sda1`, `ext4` with `noatime`)  
-- **Wi-Fi:** Broadcom BCM4313 (`14e4:4727`, mainline `brcmsmac` driver + `firmware-brcm80211`, interface `wlan0`)  
-- **OS & Stack:** Debian 12 (Bookworm) `amd64` Minimal + GRUB2 (`GRUB_TIMEOUT=0`) + `5s-init` + `cage` Wayland kiosk compositor + Debian `/usr/bin/chromium`  
+**Target Hardware (Verified from BIOS Screen: HP Pavilion 17-g111nz / `P5N65EA#UUZ`):**  
+- **System Board & BIOS:** Board ID **`8094`**, BIOS **`F.77`** (InsydeH2O UEFI 2.4 Fast Boot + Legacy CSM)  
+- **CPU:** **Intel Pentium 3825U @ 1.90 GHz** (5th-Gen "Broadwell-U" 14nm, **2 physical cores / 4 threads** `cpu0..cpu3`, **2 MB L3 cache**, out-of-order `x86_64`, `SSE4.1` + `SSE4.2` + `POPCNT` + `MOVBE`, no `AVX`)  
+- **RAM:** **4 GB DDR3L-1600** (`4096 MB`) + **1024 MB 4-stream LZ4 `zram0`**  
+- **GPU & Display:** **Intel HD Graphics (Broadwell GT1, Gen8)** (`i915` KMS driver, hardware **VA-API H.264/VP8 video decode** via `i965-va-driver`) driving a 17.3" **1600×900** panel (`eDP-1`, `/dev/fb0`)  
+- **Storage & Ports:** Internal 2.5" SATA III (`ahci`) + SuperSpeed **USB 3.0 (`xhci_pci`)** + **SD Card Reader (`rtsx_pci_sdmmc`)**  
+- **Wi-Fi & Bluetooth:** **Intel Dual Band Wireless-AC 3165** (**WLAN FCC ID: `PD93165NG`**, 802.11ac 5 GHz + 2.4 GHz, mainline **`iwlwifi`** driver + **`firmware-iwlwifi`**)  
+- **OS & Stack:** Debian 12 (Bookworm) `amd64` Minimal + Hybrid UEFI/BIOS GRUB2 (`GRUB_TIMEOUT=0`) + `5s-init` + `cage` Wayland kiosk compositor + Debian `/usr/bin/chromium`  
 
 **Target Goal:** Power-on to interactive Gmail & YouTube in **≤ 5.0 seconds**, displaying the exact cached state from the last shutdown immediately, while bringing up Wi-Fi and syncing live deltas in the background.  
 **Scope:** Single-purpose dual-tab appliance (Tab 1: Gmail, Tab 2: YouTube). Zero general-purpose browser chrome, extensions, or multi-user OS overhead.

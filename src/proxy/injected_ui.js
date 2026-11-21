@@ -1,9 +1,9 @@
 (function () {
   "use strict";
 
-  // 1. Atom N550 Media Survival (h264ify <= 480p30)
-  const BLOCKED_CODECS = /vp0?9|vp0?8|av01/i;
-  const HIGH_RES = /height=(?:[5-9]\d{2}|[1-9]\d{3,})/i;
+  // 1. Broadwell Gen8 VA-API Media Filter (H.264/VP8 <= 1080p hardware decode; block VP9/AV1)
+  const BLOCKED_CODECS = /vp0?9|av01/i;
+  const HIGH_RES = /height=(?:1[1-9]\d{2}|[2-9]\d{3,})/i;
 
   if (typeof MediaSource !== "undefined" && typeof MediaSource.isTypeSupported === "function") {
     const origIsSupported = MediaSource.isTypeSupported.bind(MediaSource);

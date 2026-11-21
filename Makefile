@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS := -O2 -march=bonnell -mtune=bonnell -mno-sse4.1 -mno-sse4.2 -mno-avx -Wall -Wextra -Werror -pthread
+CFLAGS := -O2 -march=nehalem -mtune=broadwell -mmovbe -mno-avx -mno-avx2 -mno-bmi -mno-bmi2 -mno-fma -Wall -Wextra -Werror -pthread
 BUILD_DIR := build
 BIN_DIR := $(BUILD_DIR)/bin
 DIST_DIR := dist
@@ -33,12 +33,12 @@ build: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 
 check-isa: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 	@for bin in $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init; do \
-		if objdump -d "$$bin" | grep -qE '\b(pinsrd|pmuldq|pcmpgtq|crc32|vmov)'; then \
-			echo "ERROR: Forbidden SSE4.1+/AVX instruction found in $$bin"; \
+		if objdump -d "$$bin" | grep -qE '\b(vmov|vadd|vpadd|vpxor|vzeroupper|shrx|shlx|sarx|rorx|andn|blsr|tzcnt|lzcnt)\b'; then \
+			echo "ERROR: Forbidden AVX/AVX2/BMI instruction found in $$bin"; \
 			exit 1; \
 		fi; \
 	done
-	@echo "[PASS] Bonnell ISA check passed (no SSE4.1+/AVX instructions)"
+	@echo "[PASS] Pentium 3825U ISA check passed (no AVX/AVX2/BMI instructions)"
 
 test: build check-isa
 	bash tests/run_all.sh

@@ -137,7 +137,7 @@ def main() -> None:
                 assert resp.getcode() == 200
                 assert resp.headers.get("X-5S-Cache") == "HIT"
                 assert app_ms < max_hit_ms, f"/app took {app_ms:.2f}ms (>= {max_hit_ms}ms)"
-                assert "vp0?9|vp0?8|av01" in app_body
+                assert "vp0?9|av01" in app_body
                 assert '"F1"' in app_body and '"F2"' in app_body
 
             # Assert cached proxy hits < max_hit_ms

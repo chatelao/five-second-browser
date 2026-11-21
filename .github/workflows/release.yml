@@ -21,7 +21,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl \
-            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools debian-archive-keyring parted xz-utils e2fsprogs \
+            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools dosfstools debian-archive-keyring parted xz-utils e2fsprogs \
             qemu-system-x86 linux-image-virtual busybox-static cpio gzip
 
       - name: Lint, build, test, QEMU boot check, and package assets

@@ -4,7 +4,7 @@ set -euo pipefail
 MOCK_MODE="${MOCK_MODE:-0}"
 
 if [[ "$MOCK_MODE" == "1" ]]; then
-  echo "zram0: mock mode 512M lz4 max_comp_streams=4"
+  echo "zram0: mock mode 1024M lz4 max_comp_streams=4"
   exit 0
 fi
 
@@ -17,7 +17,7 @@ fi
 
 echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || true
 echo 4 > /sys/block/zram0/max_comp_streams 2>/dev/null || true
-echo 512M > /sys/block/zram0/disksize
+echo 1024M > /sys/block/zram0/disksize
 
 mkswap /dev/zram0 >/dev/null
 swapon -p 100 /dev/zram0

@@ -39,14 +39,16 @@ fi
 CHROMIUM_FLAGS=(
   "--app=${PROXY_URL}/app"
   "--kiosk"
-  "--window-size=1024,600"
+  "--start-fullscreen"
   "--no-first-run"
   "--no-default-browser-check"
-  "--disable-gpu"
-  "--disable-gpu-compositing"
+  "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,CanvasOopRasterization"
+  "--ignore-gpu-blocklist"
+  "--enable-gpu-rasterization"
+  "--enable-zero-copy"
   "--renderer-process-limit=2"
   "--process-per-site"
-  "--js-flags=--max-old-space-size=384"
+  "--js-flags=--max-old-space-size=768"
   "--v8-cache-options=code"
   "--disk-cache-dir=${STATE_DIR}/chromium_cache"
   "--user-data-dir=${STATE_DIR}/chromium_profile"
@@ -56,7 +58,6 @@ CHROMIUM_FLAGS=(
   "--disable-sync"
   "--disable-translate"
   "--disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
-  "--enable-low-end-device-mode"
 )
 
 exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

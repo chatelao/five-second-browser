@@ -250,7 +250,7 @@ def render_wifi_setup_html() -> bytes:
 <meta charset="utf-8">
 <title>5s-browser Wi-Fi Setup</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 1024px; height: 600px; overflow: hidden; font-family: sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; }
+  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; }
   .card { width: 420px; background: #1e293b; border-radius: 10px; padding: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
   h1 { margin: 0 0 8px 0; font-size: 20px; }
   p { margin: 0 0 20px 0; font-size: 13px; color: #94a3b8; }
@@ -315,12 +315,12 @@ def render_app_html(state: ProxyState) -> bytes:
 <meta charset="utf-8">
 <title>5s-browser</title>
 <style>
-  html, body {{ margin: 0; padding: 0; width: 1024px; height: 600px; overflow: hidden; font-family: sans-serif; background: #111; color: #eee; }}
+  html, body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; background: #111; color: #eee; }}
   #topbar {{ height: 24px; background: #1e293b; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font-size: 12px; }}
   .tabs {{ display: flex; gap: 6px; }}
   .tab-btn {{ background: #334155; color: #e2e8f0; border: none; height: 20px; padding: 0 10px; cursor: pointer; font-size: 12px; }}
   .tab-btn.active {{ background: #3b82f6; color: #fff; font-weight: bold; }}
-  #viewport {{ position: relative; width: 100%; height: 576px; }}
+  #viewport {{ position: relative; width: 100%; height: calc(100vh - 24px); }}
   .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; }}
   #pane-youtube {{ visibility: hidden; pointer-events: none; background: #0f0f0f; color: #f1f1f1; }}
 </style>

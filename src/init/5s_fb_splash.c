@@ -1,14 +1,34 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/fb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define FRAME_BYTES (1024 * 600 * 2) /* 1,228,800 bytes (1024x600 RGB565) */
+#define DEFAULT_FRAME_BYTES (1024UL * 600UL * 2UL) /* Fallback for mock/unconfigured devices */
+
+static size_t detect_frame_bytes(int fb_fd, int snap_fd) {
+    struct fb_fix_screeninfo finfo;
+    memset(&finfo, 0, sizeof(finfo));
+    if (fb_fd >= 0 && ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0 && finfo.smem_len > 0) {
+        return (size_t)finfo.smem_len;
+    }
+
+    struct stat st;
+    if (snap_fd >= 0 && fstat(snap_fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+        return (size_t)st.st_size;
+    }
+    if (fb_fd >= 0 && fstat(fb_fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+        return (size_t)st.st_size;
+    }
+
+    return DEFAULT_FRAME_BYTES;
+}
 
 static int write_all(int fd, const void *buf, size_t len) {
     const unsigned char *p = (const unsigned char *)buf;
@@ -46,6 +66,8 @@ static int capture_frame(const char *fb_dev, const char *out_path) {
         return 1;
     }
 
+    size_t frame_bytes = detect_frame_bytes(fb_fd, -1);
+
     size_t tmp_len = strlen(out_path) + 5;
     char *tmp_path = malloc(tmp_len);
     if (!tmp_path) {
@@ -64,15 +86,15 @@ static int capture_frame(const char *fb_dev, const char *out_path) {
     }
 
     int write_ok = 0;
-    void *mapped = mmap(NULL, FRAME_BYTES, PROT_READ, MAP_SHARED, fb_fd, 0);
+    void *mapped = mmap(NULL, frame_bytes, PROT_READ, MAP_SHARED, fb_fd, 0);
     if (mapped != MAP_FAILED) {
-        write_ok = (write_all(out_fd, mapped, FRAME_BYTES) == 0);
-        munmap(mapped, FRAME_BYTES);
+        write_ok = (write_all(out_fd, mapped, frame_bytes) == 0);
+        munmap(mapped, frame_bytes);
     } else {
-        unsigned char *buf = malloc(FRAME_BYTES);
+        unsigned char *buf = malloc(frame_bytes);
         if (buf) {
-            if (read_all(fb_fd, buf, FRAME_BYTES) == 0) {
-                write_ok = (write_all(out_fd, buf, FRAME_BYTES) == 0);
+            if (read_all(fb_fd, buf, frame_bytes) == 0) {
+                write_ok = (write_all(out_fd, buf, frame_bytes) == 0);
             }
             free(buf);
         }
@@ -115,22 +137,24 @@ static int restore_frame(const char *fb_dev, const char *in_path) {
         return 1;
     }
 
-    void *in_map = mmap(NULL, FRAME_BYTES, PROT_READ, MAP_PRIVATE, in_fd, 0);
-    void *fb_map = mmap(NULL, FRAME_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
+    size_t frame_bytes = detect_frame_bytes(fb_fd, in_fd);
+
+    void *in_map = mmap(NULL, frame_bytes, PROT_READ, MAP_PRIVATE, in_fd, 0);
+    void *fb_map = mmap(NULL, frame_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
 
     if (in_map != MAP_FAILED && fb_map != MAP_FAILED) {
-        memcpy(fb_map, in_map, FRAME_BYTES);
-        munmap(fb_map, FRAME_BYTES);
-        munmap(in_map, FRAME_BYTES);
+        memcpy(fb_map, in_map, frame_bytes);
+        munmap(fb_map, frame_bytes);
+        munmap(in_map, frame_bytes);
         close(fb_fd);
         close(in_fd);
         return 0;
     }
 
-    if (in_map != MAP_FAILED) munmap(in_map, FRAME_BYTES);
-    if (fb_map != MAP_FAILED) munmap(fb_map, FRAME_BYTES);
+    if (in_map != MAP_FAILED) munmap(in_map, frame_bytes);
+    if (fb_map != MAP_FAILED) munmap(fb_map, frame_bytes);
 
-    unsigned char *buf = malloc(FRAME_BYTES);
+    unsigned char *buf = malloc(frame_bytes);
     if (!buf) {
         close(fb_fd);
         close(in_fd);
@@ -138,8 +162,8 @@ static int restore_frame(const char *fb_dev, const char *in_path) {
     }
 
     int ok = 0;
-    if (read_all(in_fd, buf, FRAME_BYTES) == 0) {
-        if (lseek(fb_fd, 0, SEEK_SET) >= 0 && write_all(fb_fd, buf, FRAME_BYTES) == 0) {
+    if (read_all(in_fd, buf, frame_bytes) == 0) {
+        if (lseek(fb_fd, 0, SEEK_SET) >= 0 && write_all(fb_fd, buf, frame_bytes) == 0) {
             ok = 1;
         }
     }

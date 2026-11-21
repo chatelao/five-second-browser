@@ -52,13 +52,15 @@ fi
 
 # 4. Write completion manifest
 FRAME_SHA256="none"
+FRAME_BYTES=0
 if [[ -f "$STATE_DIR/last_frame.fb" ]]; then
+  FRAME_BYTES="$(stat -c%s "$STATE_DIR/last_frame.fb")"
   FRAME_SHA256="$(sha256sum "$STATE_DIR/last_frame.fb" | awk '{print $1}')"
 fi
 
 cat > "$STATE_DIR/checkpoint.manifest" <<EOF
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-FRAME_BYTES=1228800
+FRAME_BYTES=${FRAME_BYTES}
 FRAME_SHA256=${FRAME_SHA256}
 EOF
 

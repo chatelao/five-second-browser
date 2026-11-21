@@ -22,7 +22,7 @@ echo "1. Bootstrapping minimal Debian 12 (bookworm) amd64 rootfs..."
 debootstrap \
   --arch=amd64 \
   --variant=minbase \
-  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates \
+  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates \
   bookworm "$ROOTFS" http://deb.debian.org/debian
 
 cat > "$ROOTFS/etc/apt/sources.list" <<'EOF'
@@ -43,10 +43,10 @@ cleanup_mounts() {
 }
 trap cleanup_mounts EXIT
 
-echo "2. Installing Broadcom BCM4313 firmware, iwd, cage, chromium, and 5s-browser..."
+echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, cage, chromium, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-brcm80211 iwd dhcpcd-base cage chromium
+  firmware-iwlwifi firmware-brcm80211 i965-va-driver iwd dhcpcd-base cage chromium
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
@@ -93,7 +93,7 @@ cat > "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 set default=0
 set timeout=3
 
-menuentry "Install 5s-browser automatically to /dev/sda (HP Mini Atom N550)" {
+menuentry "Install 5s-browser automatically to /dev/sda (HP Pavilion 3825U)" {
     linux /live/vmlinuz boot=live components quiet 5s_autoinstall=1
     initrd /live/initrd.img
 }

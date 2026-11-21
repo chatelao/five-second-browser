@@ -72,4 +72,24 @@ if ! cmp -s "$TMP_DIR/fb0.orig" "$FB_MOCK"; then
   exit 1
 fi
 
-echo "test_fb_splash: capture=${cap_ms}ms restore=${res_ms}ms (pixel-identical, limit=${MAX_FB_MS}ms)"
+# Verify dynamic 1600x900 32-bit XRGB8888 (5,760,000-byte) HP Pavilion eDP-1 frame size
+HDPLUS_BYTES=5760000
+FB_HDPLUS="$TMP_DIR/fb_1600x900"
+SNAP_HDPLUS="$TMP_DIR/last_frame_1600x900.fb"
+python3 - "$FB_HDPLUS" "$HDPLUS_BYTES" <<'PYEOF'
+import sys
+path, size = sys.argv[1], int(sys.argv[2])
+pattern = b"\xde\xad\xbe\xef"
+with open(path, "wb") as f:
+    f.write(pattern * (size // len(pattern)))
+PYEOF
+cp "$FB_HDPLUS" "$TMP_DIR/fb_1600x900.orig"
+FB_DEVICE="$FB_HDPLUS" "$SPLASH_BIN" --capture "$SNAP_HDPLUS"
+dd if=/dev/zero of="$FB_HDPLUS" bs="$HDPLUS_BYTES" count=1 conv=notrunc status=none
+FB_DEVICE="$FB_HDPLUS" "$SPLASH_BIN" --restore "$SNAP_HDPLUS"
+if ! cmp -s "$TMP_DIR/fb_1600x900.orig" "$FB_HDPLUS"; then
+  echo "ERROR: dynamic 1600x900 framebuffer restore mismatch"
+  exit 1
+fi
+
+echo "test_fb_splash: capture=${cap_ms}ms restore=${res_ms}ms (pixel-identical + 1600x900 verified, limit=${MAX_FB_MS}ms)"

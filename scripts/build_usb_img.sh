@@ -20,17 +20,20 @@ fi
 rm -rf "$WORK_DIR" "$IMG_RAW"
 mkdir -p "$MNT_DIR" "$ROOT_DIR/dist"
 
-echo "1. Creating ${IMG_SIZE_MB}MB raw disk image..."
+echo "1. Creating ${IMG_SIZE_MB}MB hybrid UEFI+BIOS USB/SD disk image..."
 truncate -s "${IMG_SIZE_MB}M" "$IMG_RAW"
 parted -s "$IMG_RAW" mklabel msdos
-parted -s "$IMG_RAW" mkpart primary ext4 1MiB 100%
-parted -s "$IMG_RAW" set 1 boot on
+parted -s "$IMG_RAW" mkpart primary fat32 1MiB 65MiB
+parted -s "$IMG_RAW" set 1 esp on
+parted -s "$IMG_RAW" mkpart primary ext4 65MiB 100%
+parted -s "$IMG_RAW" set 2 boot on
 
 LOOP_DEV="$(losetup --find --show --partscan "$IMG_RAW")"
 cleanup() {
   umount "$MNT_DIR/sys" 2>/dev/null || true
   umount "$MNT_DIR/proc" 2>/dev/null || true
   umount "$MNT_DIR/dev" 2>/dev/null || true
+  umount "$MNT_DIR/boot/efi" 2>/dev/null || true
   umount "$MNT_DIR" 2>/dev/null || true
   if [[ -n "${LOOP_DEV:-}" ]]; then
     losetup -d "$LOOP_DEV" 2>/dev/null || true
@@ -38,15 +41,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LOOP_PART="${LOOP_DEV}p1"
+EFI_PART="${LOOP_DEV}p1"
+ROOT_PART="${LOOP_DEV}p2"
 for _ in $(seq 1 20); do
-  [[ -b "$LOOP_PART" ]] && break
+  [[ -b "$ROOT_PART" ]] && break
   partprobe "$LOOP_DEV" 2>/dev/null || true
   sleep 0.2
 done
 
-mkfs.ext4 -F -L 5s-usb-root "$LOOP_PART"
-mount "$LOOP_PART" "$MNT_DIR"
+mkfs.vfat -F 32 -n 5S-USB-EFI "$EFI_PART"
+mkfs.ext4 -F -L 5s-usb-root "$ROOT_PART"
+mount "$ROOT_PART" "$MNT_DIR"
 
 if [[ -n "$BASE_ROOTFS" && -d "$BASE_ROOTFS/opt/5s-browser" ]]; then
   echo "2. Reusing pre-bootstrapped rootfs from $BASE_ROOTFS..."
@@ -61,7 +66,7 @@ else
   debootstrap \
     --arch=amd64 \
     --variant=minbase \
-    --include=linux-image-amd64,systemd-sysv,grub-pc,grub-pc-bin,e2fsprogs,kmod,udev,python3,lz4,curl,ca-certificates \
+    --include=linux-image-amd64,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,e2fsprogs,kmod,udev,python3,lz4,curl,ca-certificates \
     bookworm "$MNT_DIR" http://deb.debian.org/debian
 
   cat > "$MNT_DIR/etc/apt/sources.list" <<'EOF'
@@ -76,35 +81,40 @@ EOF
   mount --bind /proc "$MNT_DIR/proc"
   mount --bind /sys "$MNT_DIR/sys"
 
-  echo "3. Installing firmware-brcm80211, iwd, cage, chromium, and 5s-browser..."
+  echo "3. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, cage, chromium, and 5s-browser..."
   chroot "$MNT_DIR" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$MNT_DIR" apt-get install -y --no-install-recommends \
-    firmware-brcm80211 iwd dhcpcd-base cage chromium
+    firmware-iwlwifi firmware-brcm80211 i965-va-driver iwd dhcpcd-base cage chromium
   cp "$DEB_FILE" "$MNT_DIR/tmp/5s-browser.deb"
   chroot "$MNT_DIR" dpkg -i /tmp/5s-browser.deb
   rm -f "$MNT_DIR/tmp/5s-browser.deb" "$MNT_DIR/usr/sbin/policy-rc.d"
   chroot "$MNT_DIR" apt-get clean
 fi
 
+mkdir -p "$MNT_DIR/boot/efi"
+mount "$EFI_PART" "$MNT_DIR/boot/efi"
+
 cat > "$MNT_DIR/etc/fstab" <<'EOF'
-LABEL=5s-usb-root  /  ext4  defaults,noatime,commit=60  0  1
+LABEL=5s-usb-root  /          ext4  defaults,noatime,commit=60  0  1
+LABEL=5S-USB-EFI   /boot/efi  vfat  umask=0077                  0  2
 EOF
 
-echo "4. Configuring GRUB2 for portable USB/SD boot (root=LABEL=5s-usb-root rootwait)..."
+echo "4. Installing hybrid UEFI + Legacy BIOS GRUB2 for USB 3.0 & SD Card boot..."
 mkdir -p "$MNT_DIR/etc/default/grub.d"
 cat > "$MNT_DIR/etc/default/grub.d/5s-browser.cfg" <<'EOF'
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=0
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=0 mitigations=off i915.fastboot=1 video=LVDS-1:1024x600@60e vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=0 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 init=/opt/5s-browser/bin/5s-init"
 EOF
 
 chroot "$MNT_DIR" grub-install --target=i386-pc --recheck "$LOOP_DEV"
+chroot "$MNT_DIR" grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
 chroot "$MNT_DIR" update-grub
 
-# Ensure initramfs includes usb-storage and mmc_block for USB/SD card boot
-for mod in usb_storage uas mmc_block sdhci sdhci_pci; do
+# Ensure initramfs includes USB 3.0 (xHCI) & Realtek PCIe SD card reader modules
+for mod in xhci_pci xhci_hcd usb_storage uas rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci; do
   if ! grep -qx "$mod" "$MNT_DIR/etc/initramfs-tools/modules" 2>/dev/null; then
     echo "$mod" >> "$MNT_DIR/etc/initramfs-tools/modules"
   fi
