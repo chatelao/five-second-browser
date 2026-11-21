@@ -12,17 +12,24 @@
 | **CPU** | **Intel Atom N550** (`x86_64`, 1.50 GHz, 2 physical cores / 4 threads, `SSSE3` + `MOVBE`, no `SSE4.1+`) |
 | **RAM** | **2 GB DDR3** (2048 MB SODIMM @ 667 MHz) + 512 MB 4-stream LZ4 `zram0` (auto-configured) |
 | **GPU & Display** | **Intel GMA 3150** (`8086:a011`, `i915` KMS) driving a **1024×600** LVDS panel (`LVDS-1`, 16-bit RGB565 `/dev/fb0`) |
-| **Storage** | 2.5" SATA II HDD or SSD on Intel NM10 `ahci` (`/dev/sda`, ≥ 4 GB) |
+| **Storage** | **Option A:** Any USB stick or SD card (≥ 4 GB) — *leaves internal drive untouched*<br>**Option B:** Internal 2.5" SATA II HDD/SSD (`/dev/sda`, ≥ 4 GB) |
 | **Wi-Fi Card** | **Broadcom BCM4313** (`14e4:4727`, `brcmsmac` + `firmware-brcm80211`, interface `wlan0`) |
 
 ---
 
 ## Installation (2 Steps Only)
 
-### Step 1: Install the ISO
-1. Download **`5s-browser-0.2.0-amd64.iso`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases) and flash it to a USB stick (using Rufus, BalenaEtcher, or `dd`).
-2. Plug the USB stick into your HP Mini, power on, and press **`F9`** to boot from USB.
-3. Wait ~90 seconds: the installer automatically partitions `/dev/sda`, installs Debian 12 + `firmware-brcm80211` + `cage` + `chromium` + `5s-browser`, configures GRUB2 (`TIMEOUT=0`, `i915.fastboot=1`, `init=/opt/5s-browser/bin/5s-init`), and **reboots automatically**. *(Remove the USB stick when the screen goes black for reboot.)*
+### Step 1: Flash & Boot
+Choose **either** the 100% portable USB/SD card image (leaves your internal hard drive untouched) **or** the internal-disk installer ISO:
+
+- **Option A — Run 100% from USB Stick or SD Card (Zero Internal Disk Changes):**
+  1. Download **`5s-browser-0.3.0-usb-sd-amd64.img.xz`** from the [GitHub Releases page](https://github.com/chatelao/five-second-browser/releases).
+  2. Flash it directly to a USB stick or SD card (≥ 4 GB) using **BalenaEtcher**, **Rufus**, or **Raspberry Pi Imager** (they decompress `.img.xz` automatically).
+  3. Insert the USB stick or SD card into your HP Mini, power on, and press **`F9`** to boot from it. Everything runs and persists directly on the USB/SD card.
+
+- **Option B — Install Permanently to Internal Hard Drive (`/dev/sda`):**
+  1. Download **`5s-browser-0.3.0-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
+  2. Wait ~90 seconds while it automatically partitions `/dev/sda`, installs the system, and reboots.
 
 ### Step 2: Enter Wi-Fi Name + Password
 1. On first boot, the screen displays the **Connect to Wi-Fi** setup card.

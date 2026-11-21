@@ -21,9 +21,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl \
-            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools debian-archive-keyring
+            debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools debian-archive-keyring parted xz-utils e2fsprogs
 
-      - name: Lint, build, test, package .deb, and build installer ISO
+      - name: Lint, build, test, package .deb, ISO, and USB/SD image
         run: |
           shellcheck scripts/*.sh src/*/*.sh tests/*.sh
           python3 -m py_compile src/proxy/cache_proxy.py tests/test_cache_proxy.py
@@ -33,12 +33,14 @@ jobs:
           make package
           bash tests/test_release_bundle.sh
           sudo VERSION="${GITHUB_REF_NAME#v}" bash scripts/build_iso.sh
+          sudo VERSION="${GITHUB_REF_NAME#v}" bash scripts/build_usb_img.sh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: dist/HOWTO.md
           files: |
+            dist/*.img.xz
             dist/*.iso
             dist/5s-browser_0.1.0_amd64.deb
             dist/HOWTO.md

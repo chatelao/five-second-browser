@@ -46,7 +46,8 @@ done
 [[ -f "$TMP_EXTRACT/usr/share/doc/5s-browser/HOWTO.md" ]] || { echo "ERROR: missing packaged HOWTO.md"; exit 1; }
 
 REQUIRED_DOC_STRINGS=(
-  "5s-browser-0.2.0-amd64.iso"
+  "5s-browser-0.3.0-usb-sd-amd64.img.xz"
+  "5s-browser-0.3.0-amd64.iso"
   "Connect to Wi-Fi"
   "Connect & Start"
   "5s-browser_0.1.0_amd64.deb"
