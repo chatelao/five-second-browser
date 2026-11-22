@@ -197,6 +197,7 @@ run_cage_tier() {
 
   rm -f "${STATE_DIR}/chromium_profile/Singleton"* 2>/dev/null || true
 
+  # shellcheck disable=SC2016
   local wrapper='
     /usr/bin/chromium "$@"
     rc=$?
