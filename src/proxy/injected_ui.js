@@ -63,17 +63,18 @@
 
   function setWifiStatus(ssid, signalPercent, signalDbm) {
     const el = document.getElementById("wifi-status");
-    if (!el) return;
+    const textEl = document.getElementById("wifi-status-text") || el;
+    if (!el || !textEl) return;
     if (ssid && signalPercent !== null && signalPercent !== undefined) {
-      el.textContent = "\uD83D\uDCF6 " + ssid + " (" + signalPercent + "%)";
+      textEl.textContent = ssid + " (" + signalPercent + "%)";
       el.title = signalDbm !== null && signalDbm !== undefined
         ? (ssid + " (" + signalPercent + "%, " + signalDbm + " dBm)")
         : (ssid + " (" + signalPercent + "%)");
     } else if (ssid) {
-      el.textContent = "\uD83D\uDCF6 " + ssid;
+      textEl.textContent = ssid;
       el.title = ssid;
     } else {
-      el.textContent = "\uD83D\uDCF6 No Wi-Fi";
+      textEl.textContent = "No Wi-Fi";
       el.title = "Wi-Fi Network & Signal";
     }
   }
@@ -111,7 +112,7 @@
     const playBtn = document.getElementById("btn-disc-play");
     const stopBtn = document.getElementById("btn-disc-stop");
     const ejectBtn = document.getElementById("btn-disc-eject");
-    const tabBtn = document.getElementById("tab-btn-disc");
+    const discDot = document.getElementById("disc-tab-dot");
     if (!titleEl || !capsEl) return;
 
     if (!data || !data.drive_present) {
@@ -120,7 +121,7 @@
       if (playBtn) playBtn.disabled = true;
       if (stopBtn) stopBtn.disabled = true;
       if (ejectBtn) ejectBtn.disabled = true;
-      if (tabBtn) tabBtn.textContent = "\uD83D\uDCBF Disc (F3)";
+      if (discDot) discDot.hidden = true;
       return;
     }
 
@@ -136,10 +137,10 @@
     if (data.disc_present) {
       const fmt = (data.media_type || "disc").toUpperCase();
       titleEl.textContent = (data.label || "Optical Disc") + " (" + fmt + ")";
-      if (tabBtn) tabBtn.textContent = "\uD83D\uDCBF Disc \u25CF (F3)";
+      if (discDot) discDot.hidden = false;
     } else {
       titleEl.textContent = (data.model || "Optical Drive") + " \u2014 No Disc";
-      if (tabBtn) tabBtn.textContent = "\uD83D\uDCBF Disc (F3)";
+      if (discDot) discDot.hidden = true;
     }
 
     capsEl.textContent = (data.model || "Built-in Drive") + " \u2014 " + dvdCap + cssInfo + " | " + bdCap + keyInfo;
