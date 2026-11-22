@@ -177,7 +177,9 @@ static void setup_pid1_mounts(void) {
     if (!is_submount("/dev/pts", "/dev")) (void)mount("devpts", "/dev/pts", "devpts", 0, NULL);
     if (!is_submount("/dev/shm", "/dev")) (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
     mkdir("/tmp", 01777);
-    if (!is_submount("/tmp", "/")) (void)mount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
+    if (access("/tmp/fb0", F_OK) != 0 && !is_submount("/tmp", "/")) {
+        (void)mount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
+    }
     (void)chmod("/tmp", 01777);
     if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
@@ -405,14 +407,14 @@ int main(int argc, char **argv) {
         tty2_pid = spawn_debug_tty2();
     }
 
-    /* Step 3: Track A across all CPUs with nice -10 priority */
+    /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
     char browser_bin[PATH_MAX + 64];
     snprintf(browser_bin, sizeof(browser_bin), "%s/5s-browser-launch.sh", bin_dir);
 
     pid_t browser_pid = -1;
     if (access(browser_bin, X_OK) == 0) {
         char *browser_argv[] = {browser_bin, "--state-dir", state_arg, NULL};
-        browser_pid = spawn_pinned(-1, -1, -10, browser_bin, browser_argv);
+        browser_pid = spawn_pinned(0, 2, -10, browser_bin, browser_argv);
         if (!test_mode) log_boot("5s-init: spawned 5s-browser-launch.sh (pid=%d)", (int)browser_pid);
     } else if (!test_mode) {
         log_boot("5s-init: ERROR 5s-browser-launch.sh not executable at %s", browser_bin);
