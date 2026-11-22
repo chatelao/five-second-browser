@@ -261,7 +261,45 @@ def main() -> None:
                 assert "network" in djson and "disc" in djson and "logs" in djson
                 assert any("ERR_NAME_NOT_RESOLVED" in ln for ln in djson["logs"].get("apps_tail", []))
 
-            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync + app-log + /diag verified")
+            # 6. Verify feature toggles in wifi.txt control UI tabs, status API, and disc endpoints
+            with open(os.path.join(tmp_dir, "wifi.txt"), "w", encoding="utf-8") as wf:
+                wf.write("ENABLE_GMAIL=false\nENABLE_YOUTUBE=true\nENABLE_DISC=false\n")
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/status") as st:
+                st_data = json.loads(st.read().decode("utf-8"))
+                assert st_data.get("features") == {"gmail": False, "youtube": True, "disc": False}, st_data
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app") as resp:
+                yt_only_html = resp.read().decode("utf-8")
+                assert 'id="tab-btn-youtube"' in yt_only_html
+                assert 'id="pane-youtube" class="pane active"' in yt_only_html
+                assert 'id="tab-btn-gmail"' not in yt_only_html
+                assert 'id="pane-gmail"' not in yt_only_html
+                assert 'id="tab-btn-disc"' not in yt_only_html
+
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"http://127.0.0.1:{proxy_port}/__5s__/disc/play",
+                        data=b"{}",
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                )
+                raise AssertionError("Expected 403 when disc feature is disabled")
+            except urllib.error.HTTPError as err:
+                assert err.code == 403
+
+            # Disc-only mode bypasses Wi-Fi setup even if wifi_configured is removed
+            os.remove(os.path.join(tmp_dir, "wifi_configured"))
+            with open(os.path.join(tmp_dir, "wifi.txt"), "w", encoding="utf-8") as wf:
+                wf.write("ENABLE_GMAIL=0\nENABLE_YOUTUBE=0\nENABLE_DISC=1\n")
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app") as resp:
+                disc_only_html = resp.read().decode("utf-8")
+                assert "Connect to Wi-Fi" not in disc_only_html
+                assert 'id="pane-disc" class="pane active"' in disc_only_html
+
+            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync + app-log + /diag + feature toggles verified")
         finally:
             proc2.terminate()
             proc2.wait(timeout=3)

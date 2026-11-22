@@ -14,6 +14,7 @@ const tabIds = {
 };
 
 let onlineNotified = false;
+let enabledFeatures = { gmail: true, youtube: true, disc: true };
 
 function appLog(level, message, extra) {
   fetch(`${PROXY_BASE}/__5s__/app-log`, {
@@ -49,6 +50,9 @@ async function ensureTab(name, url, activate) {
 }
 
 async function switchTo(name) {
+  if (name in enabledFeatures && !enabledFeatures[name]) {
+    return;
+  }
   if (name === "gmail") {
     const target = onlineNotified ? GMAIL_URL : `${PROXY_BASE}/app`;
     await ensureTab("gmail", target, true);
@@ -66,35 +70,56 @@ async function pollProxyOnline() {
     const res = await fetch(`${PROXY_BASE}/__5s__/status`);
     if (!res.ok) return;
     const st = await res.json();
+    if (st.features && typeof st.features === "object") {
+      enabledFeatures = {
+        gmail: st.features.gmail !== false,
+        youtube: st.features.youtube !== false,
+        disc: st.features.disc !== false
+      };
+    }
     if (st.online && st.wifi_configured && !onlineNotified) {
       onlineNotified = true;
-      appLog("info", "network online; launching real Gmail and YouTube tabs", {
+      appLog("info", "network online; launching enabled web tabs", {
         ssid: st.ssid || "",
-        ip: st.ip || ""
+        ip: st.ip || "",
+        features: enabledFeatures
       });
       const allTabs = await chrome.tabs.query({});
-      if (tabIds.gmail === null && allTabs.length > 0) {
-        const first = allTabs[0];
-        if (first.url && first.url.startsWith(`${PROXY_BASE}/app`) && !first.url.includes("tab=disc")) {
-          tabIds.gmail = first.id;
+      if (enabledFeatures.gmail) {
+        if (tabIds.gmail === null && allTabs.length > 0) {
+          const first = allTabs[0];
+          if (first.url && first.url.startsWith(`${PROXY_BASE}/app`) && !first.url.includes("tab=disc")) {
+            tabIds.gmail = first.id;
+          }
+        }
+        if (tabIds.gmail !== null) {
+          try {
+            const gTab = await chrome.tabs.get(tabIds.gmail);
+            if (gTab && gTab.url && gTab.url.startsWith(PROXY_BASE)) {
+              await chrome.tabs.update(gTab.id, { url: GMAIL_URL });
+            }
+          } catch (_) {}
+        } else {
+          await ensureTab("gmail", GMAIL_URL, true);
         }
       }
-      if (tabIds.gmail !== null) {
-        try {
-          const gTab = await chrome.tabs.get(tabIds.gmail);
-          if (gTab && gTab.url && gTab.url.startsWith(PROXY_BASE)) {
-            await chrome.tabs.update(gTab.id, { url: GMAIL_URL });
-          }
-        } catch (_) {}
-      } else {
-        await ensureTab("gmail", GMAIL_URL, true);
+      if (enabledFeatures.youtube) {
+        if (!enabledFeatures.gmail && allTabs.length > 0 && allTabs[0].url && allTabs[0].url.startsWith(`${PROXY_BASE}/app`) && !allTabs[0].url.includes("tab=disc")) {
+          await chrome.tabs.update(allTabs[0].id, { url: YOUTUBE_URL, active: true });
+          tabIds.youtube = allTabs[0].id;
+        } else {
+          await ensureTab("youtube", YOUTUBE_URL, !enabledFeatures.gmail);
+        }
       }
-      await ensureTab("youtube", YOUTUBE_URL, false);
     }
   } catch (_) {}
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "get_features") {
+    sendResponse({ features: enabledFeatures });
+    return false;
+  }
   if (msg && msg.type === "switch_tab" && msg.tab) {
     if (sender && sender.tab && sender.tab.url) {
       if (sender.tab.url.startsWith(PROXY_BASE) && !sender.tab.url.includes("tab=disc")) {
@@ -109,6 +134,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       appLog("error", `switch_tab(${msg.tab}) failed: ${err}`);
     });
   }
+  return false;
 });
 
 chrome.webNavigation.onErrorOccurred.addListener((details) => {

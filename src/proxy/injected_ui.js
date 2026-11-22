@@ -35,6 +35,7 @@
 
   // 3. 24px Triple-Tab Appliance Bar + Hotkeys (F1/Alt+1 = Gmail, F2/Alt+2 = YouTube, F3/Alt+3 = Disc)
   function switchTab(tabName) {
+    if (!document.getElementById("pane-" + tabName)) return;
     const tabs = ["gmail", "youtube", "disc"];
     for (let i = 0; i < tabs.length; i++) {
       const name = tabs[i];
@@ -43,6 +44,7 @@
       const active = name === tabName;
       if (btn) btn.classList.toggle("active", active);
       if (pane) {
+        pane.classList.toggle("active", active);
         pane.style.visibility = active ? "visible" : "hidden";
         pane.style.pointerEvents = active ? "auto" : "none";
       }
@@ -178,11 +180,14 @@
 
     if (typeof URLSearchParams !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("tab") === "disc") {
-        switchTab("disc");
+      const reqTab = params.get("tab");
+      if (reqTab) {
+        switchTab(reqTab);
       }
     }
-    refreshDiscStatus();
+    if (document.getElementById("pane-disc")) {
+      refreshDiscStatus();
+    }
 
     // 4. Live SSE Delta & Disc Listener
     if (typeof EventSource !== "undefined") {

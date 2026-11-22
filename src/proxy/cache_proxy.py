@@ -34,6 +34,15 @@ DEFAULT_YT_HTML = """
 """.strip()
 
 
+def _parse_bool(val: str) -> bool | None:
+    v = val.strip().strip('"').strip("'").lower()
+    if v in ("1", "true", "yes", "on", "enable", "enabled"):
+        return True
+    if v in ("0", "false", "no", "off", "disable", "disabled"):
+        return False
+    return None
+
+
 class ProxyState:
     def __init__(self, state_dir: str, online: bool, ui_js: str, port: int = 8555):
         self.state_dir = state_dir
@@ -55,7 +64,8 @@ class ProxyState:
         self.watch_urls: list[str] = []
         self._init_db()
         self.disc_manager = DiscManager(state_dir=self.state_dir)
-        self.disc_manager.start_monitor(self.broadcast_disc)
+        if self.get_features()["disc"]:
+            self.disc_manager.start_monitor(self.broadcast_disc)
         self.log_proxy("info", f"cache_proxy started (port={port}, online={online}, state_dir={state_dir})")
 
     def _write_log(self, filename: str, level: str, msg: str) -> None:
@@ -77,6 +87,47 @@ class ProxyState:
         if extra:
             detail += f" {json.dumps(extra)}"
         self._write_log("apps.log", level, detail)
+
+    def get_features(self) -> dict[str, bool]:
+        features = {"gmail": True, "youtube": True, "disc": True}
+        feat_path = os.path.join(self.state_dir, "features.json")
+        if os.path.isfile(feat_path):
+            try:
+                with open(feat_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for key in ("gmail", "youtube", "disc"):
+                    if isinstance(data.get(key), bool):
+                        features[key] = data[key]
+            except Exception:
+                pass
+
+        for cand in (
+            os.path.join(self.state_dir, "wifi.txt"),
+            "/boot/efi/wifi.txt",
+            "/boot/efi/WIFI.TXT",
+        ):
+            if os.path.isfile(cand):
+                try:
+                    with open(cand, "r", encoding="utf-8", errors="replace") as f:
+                        for raw_line in f:
+                            line = raw_line.strip()
+                            if not line or line.startswith("#") or "=" not in line:
+                                continue
+                            k, v = line.split("=", 1)
+                            k = k.strip().upper()
+                            parsed = _parse_bool(v)
+                            if parsed is None:
+                                continue
+                            if k == "ENABLE_GMAIL":
+                                features["gmail"] = parsed
+                            elif k == "ENABLE_YOUTUBE":
+                                features["youtube"] = parsed
+                            elif k == "ENABLE_DISC":
+                                features["disc"] = parsed
+                except Exception:
+                    pass
+                break
+        return features
 
     def is_wifi_configured(self) -> bool:
         if os.environ.get("SKIP_WIFI_SETUP") == "1":
@@ -332,28 +383,48 @@ class ProxyState:
         threading.Thread(target=_worker, daemon=True).start()
 
 
-def render_wifi_setup_html() -> bytes:
-    html = """<!DOCTYPE html>
+def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
+    if features is None:
+        features = {"gmail": True, "youtube": True, "disc": True}
+    enabled_net = []
+    if features.get("gmail", True):
+        enabled_net.append("Gmail")
+    if features.get("youtube", True):
+        enabled_net.append("YouTube")
+    subtitle_target = " &amp; ".join(enabled_net) if enabled_net else "online services"
+    disc_btn_html = (
+        '<button id="btn-offline-disc" type="button" class="btn-secondary">Watch DVD / Blu-ray Offline</button>'
+        if features.get("disc", True)
+        else ""
+    )
+    disc_js = (
+        'document.getElementById("btn-offline-disc").addEventListener("click", function () {\n'
+        '      window.location.href = "/app?tab=disc";\n'
+        '    });'
+        if features.get("disc", True)
+        else ""
+    )
+    html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>5s-browser Wi-Fi Setup</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; }
-  .card { width: 420px; background: #1e293b; border-radius: 10px; padding: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
-  h1 { margin: 0 0 8px 0; font-size: 20px; }
-  p { margin: 0 0 20px 0; font-size: 13px; color: #94a3b8; }
-  label { display: block; font-size: 13px; margin-bottom: 6px; color: #cbd5e1; }
-  input { width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 14px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: #fff; font-size: 14px; }
-  button { width: 100%; padding: 11px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer; }
-  .btn-secondary { margin-top: 10px; background: #334155; font-size: 13px; padding: 9px; }
-  #msg { margin-top: 12px; font-size: 13px; color: #fbbf24; min-height: 18px; }
+  html, body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; }}
+  .card {{ width: 420px; background: #1e293b; border-radius: 10px; padding: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }}
+  h1 {{ margin: 0 0 8px 0; font-size: 20px; }}
+  p {{ margin: 0 0 20px 0; font-size: 13px; color: #94a3b8; }}
+  label {{ display: block; font-size: 13px; margin-bottom: 6px; color: #cbd5e1; }}
+  input {{ width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 14px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: #fff; font-size: 14px; }}
+  button {{ width: 100%; padding: 11px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer; }}
+  .btn-secondary {{ margin-top: 10px; background: #334155; font-size: 13px; padding: 9px; }}
+  #msg {{ margin-top: 12px; font-size: 13px; color: #fbbf24; min-height: 18px; }}
 </style>
 </head>
 <body>
   <div class="card">
     <h1>Connect to Wi-Fi</h1>
-    <p>One-time setup for Gmail &amp; YouTube. Everything else is automatic.</p>
+    <p>One-time setup for {subtitle_target}. Everything else is automatic.</p>
     <form id="wifi-form">
       <label for="ssid">Wi-Fi Name (SSID)</label>
       <input id="ssid" name="ssid" type="text" required autofocus placeholder="Your Wi-Fi network">
@@ -361,35 +432,33 @@ def render_wifi_setup_html() -> bytes:
       <input id="password" name="password" type="password" placeholder="WPA2 passphrase">
       <button type="submit">Connect &amp; Start</button>
     </form>
-    <button id="btn-offline-disc" type="button" class="btn-secondary">Watch DVD / Blu-ray Offline</button>
+    {disc_btn_html}
     <div id="msg"></div>
   </div>
   <script>
-    document.getElementById("btn-offline-disc").addEventListener("click", function () {
-      window.location.href = "/app?tab=disc";
-    });
-    document.getElementById("wifi-form").addEventListener("submit", async function (e) {
+    {disc_js}
+    document.getElementById("wifi-form").addEventListener("submit", async function (e) {{
       e.preventDefault();
       const msg = document.getElementById("msg");
       msg.textContent = "Connecting...";
       const ssid = document.getElementById("ssid").value;
       const password = document.getElementById("password").value;
-      try {
-        const res = await fetch("/__5s__/wifi-setup", {
+      try {{
+        const res = await fetch("/__5s__/wifi-setup", {{
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ssid: ssid, password: password })
-        });
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ ssid: ssid, password: password }})
+        }});
         const data = await res.json();
-        if (data.ok) {
+        if (data.ok) {{
           window.location.href = data.redirect || "/app";
-        } else {
+        }} else {{
           msg.textContent = data.error || "Connection failed";
-        }
-      } catch (err) {
+        }}
+      }} catch (err) {{
         msg.textContent = "Setup error: " + err;
-      }
-    });
+      }}
+    }});
   </script>
 </body>
 </html>
@@ -398,11 +467,69 @@ def render_wifi_setup_html() -> bytes:
 
 
 def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
-    if not state.is_wifi_configured() and requested_tab != "disc":
-        return render_wifi_setup_html()
+    features = state.get_features()
+    needs_wifi = features["gmail"] or features["youtube"]
+    if not state.is_wifi_configured() and needs_wifi and not (requested_tab == "disc" and features["disc"]):
+        return render_wifi_setup_html(features)
+
+    enabled_tabs = [t for t in ("gmail", "youtube", "disc") if features[t]]
+    if requested_tab in enabled_tabs:
+        active_tab = requested_tab
+    elif enabled_tabs:
+        active_tab = enabled_tabs[0]
+    else:
+        active_tab = ""
+
     gmail_html, yt_html = state.get_app_state()
     pill_text = "● Live" if state.online else "● Cached (Connecting...)"
     pill_color = "#4ade80" if state.online else "#fbbf24"
+
+    tab_buttons = []
+    if features["gmail"]:
+        cls = "tab-btn active" if active_tab == "gmail" else "tab-btn"
+        tab_buttons.append(f'<button id="tab-btn-gmail" class="{cls}">&#9993; Gmail (F1)</button>')
+    if features["youtube"]:
+        cls = "tab-btn active" if active_tab == "youtube" else "tab-btn"
+        tab_buttons.append(f'<button id="tab-btn-youtube" class="{cls}">&#9654; YouTube (F2)</button>')
+    if features["disc"]:
+        cls = "tab-btn active" if active_tab == "disc" else "tab-btn"
+        tab_buttons.append(f'<button id="tab-btn-disc" class="{cls}">&#128191; Disc (F3)</button>')
+    tabs_html = "\n      ".join(tab_buttons)
+
+    panes = []
+    if features["gmail"]:
+        cls = "pane active" if active_tab == "gmail" else "pane"
+        panes.append(f'<div id="pane-gmail" class="{cls}">\n      <div id="gmail-feed">{gmail_html}</div>\n    </div>')
+    if features["youtube"]:
+        cls = "pane active" if active_tab == "youtube" else "pane"
+        panes.append(f'<div id="pane-youtube" class="{cls}">\n      <div id="youtube-feed">{yt_html}</div>\n    </div>')
+    if features["disc"]:
+        cls = "pane active" if active_tab == "disc" else "pane"
+        panes.append(
+            f'<div id="pane-disc" class="{cls}">\n'
+            '      <div class="disc-card">\n'
+            '        <h2 id="disc-title">Optical Drive</h2>\n'
+            '        <div id="disc-caps" class="disc-meta">Checking built-in drive...</div>\n'
+            '        <div class="disc-actions">\n'
+            '          <button id="btn-disc-play" class="disc-btn" disabled>&#9654; Play Disc</button>\n'
+            '          <button id="btn-disc-stop" class="disc-btn stop" disabled>&#9632; Stop</button>\n'
+            '          <button id="btn-disc-eject" class="disc-btn eject" disabled>&#9167; Eject</button>\n'
+            '        </div>\n'
+            '        <div id="disc-msg" class="disc-msg"></div>\n'
+            '        <div class="disc-keys">\n'
+            '          <b>Controls while playing:</b> Space = Play/Pause &bull; &larr;/&rarr; = Seek &bull; &uarr;/&darr; = Volume &bull; j = Subtitles &bull; # = Audio &bull; Esc / q = Return to Browser\n'
+            '        </div>\n'
+            '      </div>\n'
+            '    </div>'
+        )
+    if not panes:
+        panes.append(
+            '<div class="pane active" style="background:#0f172a;color:#94a3b8;display:flex;align-items:center;justify-content:center;">'
+            'All features are disabled in wifi.txt.'
+            '</div>'
+        )
+    panes_html = "\n    ".join(panes)
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -415,9 +542,10 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
   .tab-btn {{ background: #334155; color: #e2e8f0; border: none; height: 20px; padding: 0 10px; cursor: pointer; font-size: 12px; }}
   .tab-btn.active {{ background: #3b82f6; color: #fff; font-weight: bold; }}
   #viewport {{ position: relative; width: 100%; height: calc(100vh - 24px); }}
-  .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; }}
-  #pane-youtube {{ visibility: hidden; pointer-events: none; background: #0f0f0f; color: #f1f1f1; }}
-  #pane-disc {{ visibility: hidden; pointer-events: none; background: #0f172a; color: #f1f5f9; display: flex; align-items: center; justify-content: center; }}
+  .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; visibility: hidden; pointer-events: none; }}
+  .pane.active {{ visibility: visible; pointer-events: auto; }}
+  #pane-youtube {{ background: #0f0f0f; color: #f1f1f1; }}
+  #pane-disc {{ background: #0f172a; color: #f1f5f9; display: flex; align-items: center; justify-content: center; }}
   .disc-card {{ width: 520px; background: #1e293b; border-radius: 10px; padding: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }}
   .disc-card h2 {{ margin: 0 0 8px 0; font-size: 20px; }}
   .disc-meta {{ font-size: 13px; color: #94a3b8; margin-bottom: 16px; line-height: 1.5; }}
@@ -433,34 +561,12 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
 <body>
   <div id="topbar">
     <div class="tabs">
-      <button id="tab-btn-gmail" class="tab-btn active">&#9993; Gmail (F1)</button>
-      <button id="tab-btn-youtube" class="tab-btn">&#9654; YouTube (F2)</button>
-      <button id="tab-btn-disc" class="tab-btn">&#128191; Disc (F3)</button>
+      {tabs_html}
     </div>
     <div id="status-pill" style="color: {pill_color};">{pill_text}</div>
   </div>
   <div id="viewport">
-    <div id="pane-gmail" class="pane">
-      <div id="gmail-feed">{gmail_html}</div>
-    </div>
-    <div id="pane-youtube" class="pane">
-      <div id="youtube-feed">{yt_html}</div>
-    </div>
-    <div id="pane-disc" class="pane">
-      <div class="disc-card">
-        <h2 id="disc-title">Optical Drive</h2>
-        <div id="disc-caps" class="disc-meta">Checking built-in drive...</div>
-        <div class="disc-actions">
-          <button id="btn-disc-play" class="disc-btn" disabled>&#9654; Play Disc</button>
-          <button id="btn-disc-stop" class="disc-btn stop" disabled>&#9632; Stop</button>
-          <button id="btn-disc-eject" class="disc-btn eject" disabled>&#9167; Eject</button>
-        </div>
-        <div id="disc-msg" class="disc-msg"></div>
-        <div class="disc-keys">
-          <b>Controls while playing:</b> Space = Play/Pause &bull; &larr;/&rarr; = Seek &bull; &uarr;/&darr; = Volume &bull; j = Subtitles &bull; # = Audio &bull; Esc / q = Return to Browser
-        </div>
-      </div>
-    </div>
+    {panes_html}
   </div>
   <script>{state.ui_js}</script>
 </body>
@@ -723,6 +829,12 @@ def make_handler(state: ProxyState):
                 return
 
             if parsed.path == "/__5s__/disc/status":
+                if not state.get_features()["disc"]:
+                    payload = json.dumps(
+                        {"enabled": False, "drive_present": False, "disc_present": False, "playing": False}
+                    ).encode("utf-8")
+                    self._send(200, "application/json", payload)
+                    return
                 payload = json.dumps(state.disc_manager.probe()).encode("utf-8")
                 self._send(200, "application/json", payload)
                 return
@@ -739,6 +851,7 @@ def make_handler(state: ProxyState):
                         "gw": state.gw,
                         "internet_ok": state.internet_ok,
                         "net_error": state.net_error,
+                        "features": state.get_features(),
                     }
                 ).encode("utf-8")
                 self._send(200, "application/json", payload)
@@ -834,6 +947,13 @@ def make_handler(state: ProxyState):
                     code,
                     "application/json",
                     json.dumps({"ok": ok, "error": None if ok else msg, "redirect": "/app"}).encode("utf-8"),
+                )
+                return
+            if self.path in ("/__5s__/disc/play", "/__5s__/disc/stop", "/__5s__/disc/eject") and not state.get_features()["disc"]:
+                self._send(
+                    403,
+                    "application/json",
+                    json.dumps({"ok": False, "message": "Disc feature is disabled"}).encode("utf-8"),
                 )
                 return
             if self.path == "/__5s__/disc/play":

@@ -171,6 +171,22 @@ notify_proxy_online() {
   return 0
 }
 
+parse_bool() {
+  local val="${1:-}"
+  val="${val#"${val%%[![:space:]]*}"}"
+  val="${val%"${val##*[![:space:]]}"}"
+  val="${val%\"}"
+  val="${val#\"}"
+  val="${val%\'}"
+  val="${val#\'}"
+  val="${val,,}"
+  case "$val" in
+    1|true|yes|on|enable|enabled) echo "true" ;;
+    0|false|no|off|disable|disabled) echo "false" ;;
+    *) echo "" ;;
+  esac
+}
+
 import_external_wifi_config() {
   local wifi_file=""
   for cand in "$STATE_DIR/wifi.txt" /boot/efi/wifi.txt /boot/efi/WIFI.TXT; do
@@ -199,19 +215,38 @@ import_external_wifi_config() {
 
   local ext_ssid=""
   local ext_pass=""
+  local enable_gmail="true"
+  local enable_youtube="true"
+  local enable_disc="true"
   while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     local line="${raw_line%$'\r'}"
     [[ -z "${line//[[:space:]]/}" || "$line" =~ ^[[:space:]]*# ]] && continue
-    if [[ "$line" =~ ^SSID=(.*)$ ]]; then
+    if [[ "$line" =~ ^[[:space:]]*SSID=(.*)$ ]]; then
       ext_ssid="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^PASSWORD=(.*)$ || "$line" =~ ^PSK=(.*)$ || "$line" =~ ^PASS=(.*)$ ]]; then
-      ext_pass="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^[[:space:]]*(PASSWORD|PSK|PASS)=(.*)$ ]]; then
+      ext_pass="${BASH_REMATCH[2]}"
+    elif [[ "$line" =~ ^[[:space:]]*ENABLE_GMAIL=(.*)$ ]]; then
+      local parsed
+      parsed="$(parse_bool "${BASH_REMATCH[1]}")"
+      [[ -n "$parsed" ]] && enable_gmail="$parsed"
+    elif [[ "$line" =~ ^[[:space:]]*ENABLE_YOUTUBE=(.*)$ ]]; then
+      local parsed
+      parsed="$(parse_bool "${BASH_REMATCH[1]}")"
+      [[ -n "$parsed" ]] && enable_youtube="$parsed"
+    elif [[ "$line" =~ ^[[:space:]]*ENABLE_DISC=(.*)$ ]]; then
+      local parsed
+      parsed="$(parse_bool "${BASH_REMATCH[1]}")"
+      [[ -n "$parsed" ]] && enable_disc="$parsed"
     elif [[ -z "$ext_ssid" ]]; then
       ext_ssid="$line"
     elif [[ -z "$ext_pass" ]]; then
       ext_pass="$line"
     fi
   done < "$wifi_file"
+
+  cat > "$STATE_DIR/features.json" <<EOF
+{"gmail": ${enable_gmail}, "youtube": ${enable_youtube}, "disc": ${enable_disc}}
+EOF
 
   if [[ -z "$ext_ssid" ]]; then
     usb_log "network" "wifi.txt: found at $wifi_file but no active SSID configured"

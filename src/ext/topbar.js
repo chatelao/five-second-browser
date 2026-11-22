@@ -65,9 +65,22 @@
 
   const left = document.createElement("div");
   left.style.cssText = "display:flex;align-items:center;";
-  left.appendChild(mkBtn("fs-5s-gmail", "\u2709 Gmail (F1)", "gmail"));
-  left.appendChild(mkBtn("fs-5s-yt", "\u25B6 YouTube (F2)", "youtube"));
-  left.appendChild(mkBtn("fs-5s-disc", "\uD83D\uDCBF Disc (F3)", "disc"));
+  const btnGmail = mkBtn("fs-5s-gmail", "\u2709 Gmail (F1)", "gmail");
+  const btnYt = mkBtn("fs-5s-yt", "\u25B6 YouTube (F2)", "youtube");
+  const btnDisc = mkBtn("fs-5s-disc", "\uD83D\uDCBF Disc (F3)", "disc");
+  left.appendChild(btnGmail);
+  left.appendChild(btnYt);
+  left.appendChild(btnDisc);
+
+  try {
+    chrome.runtime.sendMessage({ type: "get_features" }, function (resp) {
+      if (resp && resp.features) {
+        if (resp.features.gmail === false) btnGmail.style.display = "none";
+        if (resp.features.youtube === false) btnYt.style.display = "none";
+        if (resp.features.disc === false) btnDisc.style.display = "none";
+      }
+    });
+  } catch (_) {}
 
   const pill = document.createElement("div");
   pill.id = "fs-5s-pill";

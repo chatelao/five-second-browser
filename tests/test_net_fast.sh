@@ -61,8 +61,28 @@ if ! echo "$status_json" | grep -q '"online": true'; then
 fi
 
 cat > "$TMP_DIR/wifi.txt" <<'EOF'
+ENABLE_GMAIL=false
+ENABLE_YOUTUBE=0
+ENABLE_DISC=yes
+EOF
+
+IWD_DIR="$TMP_DIR/iwd" MOCK_MODE=1 PROXY_URL="http://127.0.0.1:${PORT}" \
+  "$NET_SCRIPT" --boot --state-dir "$TMP_DIR"
+
+[[ -f "$TMP_DIR/features.json" ]] || { echo "ERROR: features.json not created from wifi.txt"; exit 1; }
+python3 - "$TMP_DIR/features.json" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+assert data == {"gmail": False, "youtube": False, "disc": True}, data
+PYEOF
+
+cat > "$TMP_DIR/wifi.txt" <<'EOF'
 SSID=ExternalHome5G
 PASSWORD=SuperSecret123!
+ENABLE_GMAIL=true
+ENABLE_YOUTUBE=false
+ENABLE_DISC=off
 EOF
 
 IWD_DIR="$TMP_DIR/iwd" MOCK_MODE=1 PROXY_URL="http://127.0.0.1:${PORT}" \
@@ -73,5 +93,11 @@ grep -q "Passphrase=SuperSecret123!" "$TMP_DIR/iwd/ExternalHome5G.psk" || { echo
 grep -qx "ExternalHome5G" "$TMP_DIR/wifi_configured" || { echo "ERROR: wifi_configured not updated from wifi.txt"; exit 1; }
 grep -q "NETWORK_FOUND=yes" "$TMP_DIR/logs/network.log" || { echo "ERROR: NETWORK_FOUND=yes missing from network.log"; exit 1; }
 grep -q "CONNECTION_ESTABLISHED=yes" "$TMP_DIR/logs/network.log" || { echo "ERROR: CONNECTION_ESTABLISHED=yes missing from network.log"; exit 1; }
+python3 - "$TMP_DIR/features.json" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+assert data == {"gmail": True, "youtube": False, "disc": False}, data
+PYEOF
 
-echo "test_net_fast: shutdown cache + boot preload + wifi.txt import + network.log + proxy online transition in ${elapsed}ms"
+echo "test_net_fast: shutdown cache + boot preload + wifi.txt import + network.log + feature toggles + proxy online transition in ${elapsed}ms"

@@ -232,10 +232,15 @@ cp "$SQFS_FILE" "$MNT_DIR/rootfs.squashfs"
 
 mount "$EFI_PART" "$MNT_DIR/boot/efi"
 cat > "$MNT_DIR/boot/efi/wifi.txt" <<'EOF'
-# 5s-browser External Wi-Fi Configuration (FAT32 partition: 5S-USB-EFI)
+# 5s-browser External Wi-Fi & Feature Configuration (FAT32 partition: 5S-USB-EFI)
 # Uncomment and fill in SSID and PASSWORD below (or put SSID on line 1 and PASSWORD on line 2):
 #SSID=YourWiFiName
 #PASSWORD=YourWiFiPassword
+#
+# Optional feature toggles (true/false, 1/0, yes/no, on/off; default: true):
+#ENABLE_GMAIL=true
+#ENABLE_YOUTUBE=true
+#ENABLE_DISC=true
 EOF
 
 echo "6. Installing hybrid UEFI + Legacy BIOS GRUB2 for USB 3.0 & SD Card boot..."
