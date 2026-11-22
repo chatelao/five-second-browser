@@ -25,7 +25,7 @@ echo "1. Bootstrapping minimal Debian 12 (bookworm) amd64 rootfs..."
 DEBOOTSTRAP_ARGS=(
   --arch=amd64
   --variant=minbase
-  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates
+  "--include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates"
 )
 if [[ -n "${DEBOOTSTRAP_CACHE_DIR:-}" ]]; then
   mkdir -p "$DEBOOTSTRAP_CACHE_DIR"
