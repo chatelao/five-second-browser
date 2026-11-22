@@ -170,6 +170,9 @@
       } else if (e.key === "F3" || (e.altKey && e.key === "3")) {
         e.preventDefault();
         switchTab("disc");
+      } else if (e.key === "F12" || (e.altKey && (e.key === "d" || e.key === "D"))) {
+        e.preventDefault();
+        window.location.href = "/diag";
       }
     });
 
@@ -195,6 +198,17 @@
           if (data.youtube_html) {
             const y = document.getElementById("youtube-feed");
             if (y) y.innerHTML = data.youtube_html;
+          }
+        } catch (_) {}
+      });
+      es.addEventListener("net_status", function (ev) {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.online) {
+            setStatus("● Live", "#4ade80");
+          } else {
+            const msg = data.error ? ("● " + data.error) : "● Offline";
+            setStatus(msg, "#f87171");
           }
         } catch (_) {}
       });

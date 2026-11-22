@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "5s-browser Appliance Shell",
+  "version": "0.7.0",
+  "description": "Manages Gmail (F1), YouTube (F2), and Disc (F3) tabs with Broadwell Gen8 H.264/VA-API filtering and startup diagnostics.",
+  "permissions": [
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://www.youtube.com/*",
+    "https://accounts.google.com/*",
+    "http://127.0.0.1:8555/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["h264ify.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://www.youtube.com/*",
+        "https://accounts.google.com/*",
+        "http://127.0.0.1:8555/app*",
+        "http://127.0.0.1:8555/diag*"
+      ],
+      "js": ["topbar.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

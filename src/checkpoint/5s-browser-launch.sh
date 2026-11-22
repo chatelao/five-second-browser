@@ -18,12 +18,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USB_LOG_SH=""
+for _cand in "$SCRIPT_DIR/5s-usb-log.sh" "$SCRIPT_DIR/../config/5s-usb-log.sh" "/opt/5s-browser/bin/5s-usb-log.sh"; do
+  if [[ -f "$_cand" ]]; then
+    USB_LOG_SH="$_cand"
+    break
+  fi
+done
+if [[ -n "$USB_LOG_SH" ]]; then
+  # shellcheck source=/dev/null
+  source "$USB_LOG_SH"
+else
+  usb_log() { :; }
+  sync_usb_logs() { :; }
+fi
+
 log_msg() {
   echo "$*"
   echo "<6>$*" > /dev/kmsg 2>/dev/null || true
+  usb_log "apps" "$*"
 }
 
-mkdir -p "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
+mkdir -p "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile" "$STATE_DIR/logs"
 
 if [[ "$MOCK_MODE" == "1" ]]; then
   for _ in $(seq 1 150); do
@@ -34,6 +51,7 @@ if [[ "$MOCK_MODE" == "1" ]]; then
   done
   curl -fsS -m 2 "${PROXY_URL}/app" > "$STATE_DIR/browser_app.html"
   python3 -c 'import time; print(int(time.monotonic()*1000))' > "$STATE_DIR/browser_ready.ts"
+  usb_log "apps" "MOCK_MODE=1 browser_app.html fetched from ${PROXY_URL}/app"
   while true; do
     sleep 1
   done
@@ -42,13 +60,25 @@ fi
 PROXY_READY="async"
 log_msg "5s-browser: proxy_ready=${PROXY_READY}, preparing Wayland & DRM..."
 
+EXT_DIR=""
+for _ext_cand in "/opt/5s-browser/ext" "$SCRIPT_DIR/../ext"; do
+  if [[ -f "${_ext_cand}/manifest.json" ]]; then
+    EXT_DIR="$_ext_cand"
+    break
+  fi
+done
+
 BASE_CHROMIUM_FLAGS=(
-  "--app=${PROXY_URL}/app"
   "--kiosk"
   "--start-fullscreen"
   "--no-first-run"
   "--no-default-browser-check"
   "--disable-vulkan"
+  "--disable-dev-shm-usage"
+  "--enable-logging=stderr"
+  "--log-level=0"
+  "--no-crash-upload"
+  "--disable-breakpad"
   "--renderer-process-limit=2"
   "--process-per-site"
   "--js-flags=--max-old-space-size=768"
@@ -58,16 +88,17 @@ BASE_CHROMIUM_FLAGS=(
   "--password-store=basic"
   "--use-mock-keychain"
   "--disable-notifications"
-  "--disable-extensions"
   "--disable-component-update"
-  "--disable-background-networking"
   "--disable-sync"
   "--disable-translate"
   "--disable-features=Vulkan,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
 )
 
-if [[ "$(id -u)" -eq 0 ]]; then
-  BASE_CHROMIUM_FLAGS+=("--no-sandbox" "--test-type")
+if [[ -n "$EXT_DIR" ]]; then
+  BASE_CHROMIUM_FLAGS+=("--disable-extensions-except=${EXT_DIR}" "--load-extension=${EXT_DIR}")
+  log_msg "5s-browser: loading appliance extension from ${EXT_DIR}"
+else
+  BASE_CHROMIUM_FLAGS+=("--disable-extensions")
 fi
 
 export XDG_VTNR="${XDG_VTNR:-1}"
@@ -93,9 +124,9 @@ if [[ "$(id -u)" -eq 0 ]]; then
     HOME_DIR="$(getent passwd "$RUN_USER" | cut -d: -f6 || true)"
     export HOME="${HOME_DIR:-/home/$RUN_USER}"
     export XDG_RUNTIME_DIR="/run/user/${RUN_UID}"
-    mkdir -p "$XDG_RUNTIME_DIR" "$HOME" /tmp /tmp/.X11-unix
+    mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.pki/nssdb" /tmp /tmp/.X11-unix
     chmod 1777 /tmp /tmp/.X11-unix
-    chown "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR" "$HOME"
+    chown -R "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR" "$HOME"
     chmod 0700 "$XDG_RUNTIME_DIR"
     chown -R "${RUN_UID}:${RUN_GID}" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
   else
@@ -103,6 +134,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
     mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
     chmod 0700 "$XDG_RUNTIME_DIR"
+    BASE_CHROMIUM_FLAGS+=("--no-sandbox" "--test-type")
   fi
 
   if command -v seatd >/dev/null 2>&1; then
@@ -111,7 +143,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
     if [[ "$RUN_USER" == "nobody" ]] || ! getent group video >/dev/null 2>&1; then
       SEATD_GROUP="$(id -gn "${RUN_USER:-root}")"
     fi
-    seatd -g "$SEATD_GROUP" >"$STATE_DIR/seatd.log" 2>&1 &
+    seatd -g "$SEATD_GROUP" >"$STATE_DIR/logs/seatd.log" 2>&1 &
     SEATD_PID=$!
     for _ in $(seq 1 100); do
       [[ -S /run/seatd.sock ]] && break
@@ -159,28 +191,23 @@ dump_debug_log() {
     echo "=== 5s-browser debug (${reason}) ==="
     echo "uptime: $(cat /proc/uptime 2>/dev/null || true)"
     echo "uname: $(uname -a 2>/dev/null || true)"
+    echo "full_logs: /boot/efi/logs/current/"
     echo "--- proxy status ---"
     curl -fsS -m 1 "${PROXY_URL}/__5s__/status" 2>&1 || echo "(proxy unreachable)"
     echo ""
-    echo "--- devices (/dev/dri, /dev/input, /dev/fb*) ---"
-    ls -la /dev/dri /dev/input /dev/fb* 2>&1 || true
+    echo "--- devices (/dev/dri, /dev/input, /dev/fb*, /dev/sr*) ---"
+    ls -la /dev/dri /dev/input /dev/fb* /dev/sr* 2>&1 || true
     echo "--- processes ---"
     ps -eo pid,ppid,stat,comm,args 2>&1 || ps 2>&1 || true
-    echo "--- cage.log (last 120 lines) ---"
-    tail -n 120 "$STATE_DIR/cage.log" 2>&1 || echo "(no cage.log)"
-    if [[ -f "$STATE_DIR/seatd.log" ]]; then
+    if [[ -f "$STATE_DIR/logs/seatd.log" ]]; then
       echo "--- seatd.log (last 40 lines) ---"
-      tail -n 40 "$STATE_DIR/seatd.log" 2>&1 || true
+      tail -n 40 "$STATE_DIR/logs/seatd.log" 2>&1 || true
     fi
     echo "--- dmesg (last 80 lines) ---"
     dmesg 2>/dev/null | tail -n 80 || true
   } > "$local_log" 2>&1 || true
 
-  if [[ ! -d /boot/efi/EFI ]] && [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
-    mkdir -p /boot/efi
-    mount /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
-      mount /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
-  fi
+  sync_usb_logs
   if [[ -d /boot/efi ]] && cp "$local_log" "$efi_log" 2>/dev/null; then
     sync 2>/dev/null || true
   fi
@@ -193,9 +220,11 @@ log_msg "5s-browser: starting Cage + Chromium (user=${RUN_USER:-$(id -un)} backe
 run_cage_tier() {
   local tier="$1"
   shift
-  local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@")
+  local cage_log="$STATE_DIR/logs/cage-${tier}.log"
+  local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@" "${PROXY_URL}/app")
 
   rm -f "${STATE_DIR}/chromium_profile/Singleton"* 2>/dev/null || true
+  log_msg "5s-browser: launching tier '${tier}' -> ${cage_log}"
 
   # shellcheck disable=SC2016
   local wrapper='
@@ -208,9 +237,9 @@ run_cage_tier() {
   set +e
   if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
     setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
-      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$cage_log" 2>&1 &
   else
-    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$cage_log" 2>&1 &
   fi
   CAGE_PID=$!
 
@@ -219,13 +248,15 @@ run_cage_tier() {
     kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "5s-${tier}"
     sleep 7
     if kill -0 "$CAGE_PID" 2>/dev/null && ! pidof chromium >/dev/null 2>&1; then
-      log_msg "5s-browser: watchdog: chromium not running after 12s; last cage.log lines:"
+      log_msg "5s-browser: watchdog: chromium not running after 12s (${tier}); last log lines:"
       while IFS= read -r line; do
-        log_msg "  [cage] $line"
-      done < <(tail -n 20 "$STATE_DIR/cage.log" 2>/dev/null || true)
+        log_msg "  [cage:${tier}] $line"
+      done < <(tail -n 20 "$cage_log" 2>/dev/null || true)
     fi
     sleep 3
     kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "15s-${tier}"
+    sleep 15
+    kill -0 "$CAGE_PID" 2>/dev/null && sync_usb_logs
   ) >/dev/null 2>&1 &
   WATCHDOG_PID=$!
 
@@ -241,14 +272,17 @@ run_cage_tier() {
   wait "$WATCHDOG_PID" 2>/dev/null || true
   set -e
 
-  CHROMIUM_RC="$(grep -oE 'chromium exited with code [0-9]+' "$STATE_DIR/cage.log" 2>/dev/null | tail -n 1 | awk '{print $NF}' || true)"
+  CHROMIUM_RC="$(grep -oE 'chromium exited with code [0-9]+' "$cage_log" 2>/dev/null | tail -n 1 | awk '{print $NF}' || true)"
   if [[ "$RC" -eq 0 && ( -z "$CHROMIUM_RC" || "$CHROMIUM_RC" -eq 0 ) && "$ELAPSED" -ge 8 ]]; then
+    log_msg "5s-browser: tier '${tier}' exited cleanly after ${ELAPSED}s"
+    sync_usb_logs
     return 0
   fi
-  log_msg "5s-browser: tier '${tier}' ended after ${ELAPSED}s (cage_rc=${RC}, chromium_rc=${CHROMIUM_RC:-unknown}). Last log lines:"
+  log_msg "5s-browser: tier '${tier}' failed after ${ELAPSED}s (cage_rc=${RC}, chromium_rc=${CHROMIUM_RC:-unknown}). Last log lines:"
   while IFS= read -r line; do
-    log_msg "  [cage] $line"
-  done < <(tail -n 25 "$STATE_DIR/cage.log" 2>/dev/null || true)
+    log_msg "  [cage:${tier}] $line"
+  done < <(tail -n 25 "$cage_log" 2>/dev/null || true)
+  sync_usb_logs
   return 1
 }
 

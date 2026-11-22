@@ -223,7 +223,45 @@ def main() -> None:
                 upstream2.shutdown()
                 upstream2.server_close()
 
-            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync verified")
+            # 4. Verify /__5s__/app-log persists application start & failure logs
+            app_log_req = urllib.request.Request(
+                f"http://127.0.0.1:{proxy_port}/__5s__/app-log",
+                data=json.dumps({
+                    "level": "error",
+                    "source": "extension",
+                    "message": "navigation failed: net::ERR_NAME_NOT_RESOLVED",
+                    "extra": {"url": "https://mail.google.com/"},
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(app_log_req) as resp:
+                assert resp.getcode() == 200
+            apps_log_path = os.path.join(tmp_dir, "logs", "apps.log")
+            assert os.path.exists(apps_log_path), "logs/apps.log not created"
+            with open(apps_log_path, "r", encoding="utf-8") as f:
+                apps_log_txt = f.read()
+            assert "ERR_NAME_NOT_RESOLVED" in apps_log_txt
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/status") as st:
+                st_data = json.loads(st.read().decode("utf-8"))
+                assert st_data.get("wifi_configured") is True
+
+            # 5. Verify hidden /diag page and /__5s__/diagnostics JSON
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/diag") as diag_resp:
+                diag_html = diag_resp.read().decode("utf-8")
+                assert diag_resp.getcode() == 200
+                assert "5s-browser Diagnostics" in diag_html
+                assert "/__5s__/diagnostics" in diag_html
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/diagnostics") as djson_resp:
+                djson = json.loads(djson_resp.read().decode("utf-8"))
+                assert djson_resp.getcode() == 200
+                assert djson.get("version")
+                assert "network" in djson and "disc" in djson and "logs" in djson
+                assert any("ERR_NAME_NOT_RESOLVED" in ln for ln in djson["logs"].get("apps_tail", []))
+
+            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync + app-log + /diag verified")
         finally:
             proc2.terminate()
             proc2.wait(timeout=3)

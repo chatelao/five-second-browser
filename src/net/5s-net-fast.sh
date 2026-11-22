@@ -15,10 +15,10 @@ detect_wlan_if() {
       return 0
     fi
   done
-  echo "wlan0"
+  return 1
 }
 
-WLAN_IF="${WLAN_IF:-$(detect_wlan_if)}"
+WLAN_IF="${WLAN_IF:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,7 +47,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 NET_DIR="$STATE_DIR/net"
-mkdir -p "$NET_DIR"
+LOCAL_LOG_DIR="$STATE_DIR/logs"
+mkdir -p "$NET_DIR" "$LOCAL_LOG_DIR"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USB_LOG_SH=""
+for _cand in "$SCRIPT_DIR/5s-usb-log.sh" "$SCRIPT_DIR/../config/5s-usb-log.sh" "/opt/5s-browser/bin/5s-usb-log.sh"; do
+  if [[ -f "$_cand" ]]; then
+    USB_LOG_SH="$_cand"
+    break
+  fi
+done
+if [[ -n "$USB_LOG_SH" ]]; then
+  # shellcheck source=/dev/null
+  source "$USB_LOG_SH"
+else
+  usb_log() {
+    printf '[%s] %s\n' "${1:-network}" "${2:-}" >> "$LOCAL_LOG_DIR/network.log" 2>/dev/null || true
+  }
+  sync_usb_logs() { :; }
+fi
 
 DOMAINS=(
   "mail.google.com"
@@ -70,6 +89,7 @@ resolve_domain() {
 }
 
 do_shutdown() {
+  local iface="${WLAN_IF:-$(detect_wlan_if || echo wlan0)}"
   local cached_ip=""
   local cached_gw=""
   local cached_ssid=""
@@ -79,13 +99,13 @@ do_shutdown() {
     cached_gw="192.168.1.1"
     cached_ssid="HomeWiFi"
   else
-    cached_ip="$(ip -4 -o addr show dev "$WLAN_IF" 2>/dev/null | awk 'NR==1{print $4}' || true)"
-    cached_gw="$(ip -4 route show default dev "$WLAN_IF" 2>/dev/null | awk 'NR==1{print $3}' || true)"
-    cached_ssid="$(iwctl station "$WLAN_IF" show 2>/dev/null | awk -F'Connected network' 'NF>1{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)"
+    cached_ip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk 'NR==1{print $4}' || true)"
+    cached_gw="$(ip -4 route show default dev "$iface" 2>/dev/null | awk 'NR==1{print $3}' || true)"
+    cached_ssid="$(iwctl station "$iface" show 2>/dev/null | awk -F'Connected network' 'NF>1{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' || true)"
   fi
 
   cat > "$NET_DIR/last_lease.env" <<EOF
-WLAN_IF=${WLAN_IF}
+WLAN_IF=${iface}
 CACHED_IP=${cached_ip}
 CACHED_GW=${cached_gw}
 CACHED_SSID=${cached_ssid}
@@ -124,9 +144,26 @@ merge_hosts_cache() {
   fi
 }
 
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
 notify_proxy_online() {
+  local online="${1:-true}"
+  local ssid="${2:-}"
+  local ip="${3:-}"
+  local gw="${4:-}"
+  local internet_ok="${5:-true}"
+  local net_error="${6:-}"
+  local payload
+  payload="{\"online\":${online},\"ssid\":\"$(json_escape "$ssid")\",\"ip\":\"$(json_escape "$ip")\",\"gw\":\"$(json_escape "$gw")\",\"internet_ok\":${internet_ok},\"error\":\"$(json_escape "$net_error")\"}"
   for _ in $(seq 1 40); do
-    if curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/net-online" >/dev/null 2>&1; then
+    if curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/net-online" \
+        -H "Content-Type: application/json" \
+        -d "$payload" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.02
@@ -155,7 +192,10 @@ import_external_wifi_config() {
     done
   fi
 
-  [[ -n "$wifi_file" && -f "$wifi_file" ]] || return 0
+  if [[ -z "$wifi_file" || ! -f "$wifi_file" ]]; then
+    usb_log "network" "wifi.txt: not found in $STATE_DIR or /boot/efi"
+    return 0
+  fi
 
   local ext_ssid=""
   local ext_pass=""
@@ -173,9 +213,13 @@ import_external_wifi_config() {
     fi
   done < "$wifi_file"
 
-  [[ -n "$ext_ssid" ]] || return 0
+  if [[ -z "$ext_ssid" ]]; then
+    usb_log "network" "wifi.txt: found at $wifi_file but no active SSID configured"
+    return 0
+  fi
 
   echo "5s-net: importing Wi-Fi credentials for SSID '$ext_ssid' from $wifi_file"
+  usb_log "network" "wifi.txt: imported SSID='$ext_ssid' from $wifi_file (password_len=${#ext_pass})"
   local iwd_dir="${IWD_DIR:-/var/lib/iwd}"
   mkdir -p "$iwd_dir"
   local psk_path="$iwd_dir/${ext_ssid}.psk"
@@ -199,52 +243,201 @@ ensure_system_dbus() {
   fi
 }
 
+wait_for_wlan_if() {
+  if [[ -n "$WLAN_IF" && -e "/sys/class/net/$WLAN_IF" ]]; then
+    return 0
+  fi
+  local found=""
+  for _ in $(seq 1 75); do
+    if found="$(detect_wlan_if)"; then
+      WLAN_IF="$found"
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+ensure_iwd_running() {
+  if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
+    mkdir -p /var/lib/iwd
+    /usr/libexec/iwd >> "$LOCAL_LOG_DIR/iwd.log" 2>&1 &
+    for _ in $(seq 1 25); do
+      if iwctl device list >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+  fi
+}
+
+scan_and_connect_wifi() {
+  local iface="$1"
+  local target_ssid="$2"
+
+  if [[ -z "$target_ssid" ]]; then
+    usb_log "network" "NETWORK_FOUND=no (reason=no_ssid_configured)"
+    return 1
+  fi
+
+  if ! command -v iwctl >/dev/null 2>&1; then
+    usb_log "network" "ERROR: iwctl not found"
+    return 1
+  fi
+
+  iwctl station "$iface" scan >> "$LOCAL_LOG_DIR/network.log" 2>&1 || true
+  sleep 1.5
+
+  local networks_out=""
+  networks_out="$(iwctl station "$iface" get-networks 2>&1 || true)"
+  usb_log "network" "scan results on $iface:"
+  printf '%s\n' "$networks_out" >> "$LOCAL_LOG_DIR/network.log" 2>/dev/null || true
+
+  if printf '%s\n' "$networks_out" | grep -Fq "$target_ssid"; then
+    usb_log "network" "NETWORK_FOUND=yes (ssid='$target_ssid' iface='$iface')"
+  else
+    usb_log "network" "NETWORK_FOUND=no (ssid='$target_ssid' not visible in scan; attempting connect anyway)"
+  fi
+
+  local conn_out=""
+  conn_out="$(iwctl station "$iface" connect "$target_ssid" 2>&1 || true)"
+  if [[ -n "$conn_out" ]]; then
+    usb_log "network" "iwctl connect output: $conn_out"
+  fi
+
+  local assoc_ok=0
+  local st_out=""
+  for _ in $(seq 1 75); do
+    st_out="$(iwctl station "$iface" show 2>&1 || true)"
+    if printf '%s\n' "$st_out" | grep -qiE 'State[[:space:]]+connected'; then
+      assoc_ok=1
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$assoc_ok" -eq 1 ]]; then
+    usb_log "network" "WIFI_ASSOCIATED=yes (ssid='$target_ssid' iface='$iface')"
+    printf '%s\n' "$st_out" >> "$LOCAL_LOG_DIR/network.log" 2>/dev/null || true
+    return 0
+  fi
+
+  usb_log "network" "WIFI_ASSOCIATED=no (ssid='$target_ssid' iface='$iface')"
+  printf '%s\n' "$st_out" >> "$LOCAL_LOG_DIR/network.log" 2>/dev/null || true
+  return 1
+}
+
+wait_for_ip_and_internet() {
+  local iface="$1"
+  local ssid="$2"
+
+  if command -v dhcpcd >/dev/null 2>&1; then
+    dhcpcd -4 --noarp "$iface" >> "$LOCAL_LOG_DIR/dhcpcd.log" 2>&1 &
+  fi
+
+  local cur_ip=""
+  local cur_gw=""
+  for _ in $(seq 1 75); do
+    cur_ip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk 'NR==1{print $4}' || true)"
+    cur_gw="$(ip -4 route show default dev "$iface" 2>/dev/null | awk 'NR==1{print $3}' || true)"
+    if [[ -n "$cur_ip" && -n "$cur_gw" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ -z "$cur_ip" || -z "$cur_gw" ]]; then
+    usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$ssid' ip='${cur_ip:-none}' gw='${cur_gw:-none}' reason=dhcp_timeout)"
+    notify_proxy_online "false" "$ssid" "${cur_ip:-}" "${cur_gw:-}" "false" "DHCP lease timeout"
+    return 1
+  fi
+
+  local gw_ping=0
+  if ping -c 1 -W 2 "$cur_gw" >/dev/null 2>&1; then
+    gw_ping=1
+  fi
+
+  local dns_ip=""
+  dns_ip="$(resolve_domain "mail.google.com")"
+  local inet_ok="false"
+  if curl -fsS -I -m 4 "https://clients3.google.com/generate_204" >/dev/null 2>&1 || \
+     curl -fsS -I -m 4 "https://mail.google.com" >/dev/null 2>&1; then
+    inet_ok="true"
+  fi
+
+  if [[ "$inet_ok" == "true" ]]; then
+    usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' gw_ping=$gw_ping dns_mail='${dns_ip:-none}' internet=ok)"
+    notify_proxy_online "true" "$ssid" "$cur_ip" "$cur_gw" "true" ""
+    return 0
+  fi
+
+  usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' gw_ping=$gw_ping dns_mail='${dns_ip:-none}' reason=no_internet_or_dns)"
+  notify_proxy_online "false" "$ssid" "$cur_ip" "$cur_gw" "false" "Connected to Wi-Fi ($cur_ip), but DNS/HTTPS unreachable"
+  return 1
+}
+
 do_boot() {
+  usb_log "network" "boot network sequence started (mock=$MOCK_MODE)"
   merge_hosts_cache
 
   if [[ -f "$NET_DIR/last_lease.env" ]]; then
     # shellcheck disable=SC1091
     source "$NET_DIR/last_lease.env"
   fi
+  if [[ -z "${CACHED_SSID:-}" && -f "$STATE_DIR/wifi_configured" ]]; then
+    CACHED_SSID="$(head -n 1 "$STATE_DIR/wifi_configured" 2>/dev/null | tr -d '\r\n' || true)"
+  fi
 
   import_external_wifi_config
 
-  if [[ "$MOCK_MODE" != "1" ]]; then
-    if command -v rfkill >/dev/null 2>&1; then
-      rfkill unblock wifi >/dev/null 2>&1 || true
-    fi
-    ensure_system_dbus
-    if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
-      mkdir -p /var/lib/iwd
-      /usr/libexec/iwd >/dev/null 2>&1 &
-      sleep 0.2
-    fi
-    ip link set "$WLAN_IF" up 2>/dev/null || true
-    if [[ -n "${CACHED_IP:-}" ]]; then
-      ip addr replace "$CACHED_IP" dev "$WLAN_IF" 2>/dev/null || true
-    fi
-    if [[ -n "${CACHED_GW:-}" ]]; then
-      ip route replace default via "$CACHED_GW" dev "$WLAN_IF" 2>/dev/null || true
-    fi
-    if [[ -n "${CACHED_SSID:-}" ]] && command -v iwctl >/dev/null 2>&1; then
-      iwctl station "$WLAN_IF" connect "$CACHED_SSID" >/dev/null 2>&1 &
-    fi
-    if command -v dhcpcd >/dev/null 2>&1; then
-      dhcpcd -4 -q --noarp "$WLAN_IF" >/dev/null 2>&1 &
-    fi
-    # Wait briefly for gateway/internet reachability before notifying proxy
-    for _ in $(seq 1 50); do
-      if [[ -n "${CACHED_GW:-}" ]] && ping -c 1 -W 1 "$CACHED_GW" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
+  if [[ "$MOCK_MODE" == "1" ]]; then
+    local mock_ssid="${CACHED_SSID:-MockWiFi}"
+    usb_log "network" "NETWORK_FOUND=yes (ssid='$mock_ssid' mock=1)"
+    usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$mock_ssid' ip='${CACHED_IP:-192.168.1.42/24}' gw='${CACHED_GW:-192.168.1.1}' internet=ok mock=1)"
+    notify_proxy_online "true" "$mock_ssid" "${CACHED_IP:-192.168.1.42/24}" "${CACHED_GW:-192.168.1.1}" "true" ""
+    return 0
   fi
 
-  notify_proxy_online
+  if ! wait_for_wlan_if; then
+    usb_log "network" "ERROR: no wireless interface (/sys/class/net/wl*) appeared within 15s"
+    usb_log "network" "CONNECTION_ESTABLISHED=no (reason=no_wifi_interface)"
+    notify_proxy_online "false" "" "" "" "false" "No Wi-Fi adapter detected"
+    sync_usb_logs
+    return 0
+  fi
+  usb_log "network" "wireless interface detected: $WLAN_IF"
 
-  if [[ "$MOCK_MODE" != "1" ]] && command -v modprobe >/dev/null 2>&1; then
-    (sleep 2; modprobe snd_hda_intel >/dev/null 2>&1 || true) &
+  if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock wifi >/dev/null 2>&1 || true
+  fi
+  ensure_system_dbus
+  ensure_iwd_running
+
+  ip link set "$WLAN_IF" up 2>/dev/null || true
+  if [[ -n "${CACHED_IP:-}" ]]; then
+    ip addr replace "$CACHED_IP" dev "$WLAN_IF" 2>/dev/null || true
+  fi
+  if [[ -n "${CACHED_GW:-}" ]]; then
+    ip route replace default via "$CACHED_GW" dev "$WLAN_IF" 2>/dev/null || true
+  fi
+
+  if [[ -z "${CACHED_SSID:-}" ]]; then
+    usb_log "network" "no SSID configured yet; waiting for user setup"
+    sync_usb_logs
+    return 0
+  fi
+
+  if scan_and_connect_wifi "$WLAN_IF" "$CACHED_SSID"; then
+    wait_for_ip_and_internet "$WLAN_IF" "$CACHED_SSID" || true
+  else
+    usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$CACHED_SSID' reason=wifi_association_failed)"
+    notify_proxy_online "false" "$CACHED_SSID" "" "" "false" "Wi-Fi association failed for $CACHED_SSID"
+  fi
+
+  sync_usb_logs
+
+  if command -v modprobe >/dev/null 2>&1; then
+    (sleep 1; modprobe snd_hda_intel >/dev/null 2>&1 || true) &
   fi
 }
 
@@ -253,24 +446,45 @@ do_connect() {
     echo "ERROR: --connect requires an SSID" >&2
     exit 2
   fi
-  if [[ "$MOCK_MODE" != "1" ]]; then
-    ensure_system_dbus
-    if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
-      mkdir -p /var/lib/iwd
-      /usr/libexec/iwd >/dev/null 2>&1 &
-      sleep 0.2
-    fi
-    ip link set "$WLAN_IF" up 2>/dev/null || true
-    if command -v iwctl >/dev/null 2>&1; then
-      iwctl station "$WLAN_IF" connect "$CONNECT_SSID" || true
-    fi
-    if command -v dhcpcd >/dev/null 2>&1; then
-      dhcpcd -4 -q --noarp "$WLAN_IF" || true
-    fi
+  usb_log "network" "interactive --connect requested for SSID='$CONNECT_SSID'"
+
+  if [[ "$MOCK_MODE" == "1" ]]; then
+    usb_log "network" "NETWORK_FOUND=yes (ssid='$CONNECT_SSID' mock=1)"
+    usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$CONNECT_SSID' ip='192.168.1.42/24' gw='192.168.1.1' internet=ok mock=1)"
+    do_shutdown
+    merge_hosts_cache
+    notify_proxy_online "true" "$CONNECT_SSID" "192.168.1.42/24" "192.168.1.1" "true" ""
+    return 0
   fi
-  do_shutdown
-  merge_hosts_cache
-  notify_proxy_online
+
+  if ! wait_for_wlan_if; then
+    usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$CONNECT_SSID' reason=no_wifi_interface)"
+    notify_proxy_online "false" "$CONNECT_SSID" "" "" "false" "No Wi-Fi adapter detected"
+    sync_usb_logs
+    return 1
+  fi
+
+  if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock wifi >/dev/null 2>&1 || true
+  fi
+  ensure_system_dbus
+  ensure_iwd_running
+  ip link set "$WLAN_IF" up 2>/dev/null || true
+
+  if scan_and_connect_wifi "$WLAN_IF" "$CONNECT_SSID"; then
+    if wait_for_ip_and_internet "$WLAN_IF" "$CONNECT_SSID"; then
+      do_shutdown
+      merge_hosts_cache
+      sync_usb_logs
+      return 0
+    fi
+  else
+    usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$CONNECT_SSID' reason=wifi_association_failed)"
+    notify_proxy_online "false" "$CONNECT_SSID" "" "" "false" "Wi-Fi association failed for $CONNECT_SSID"
+  fi
+
+  sync_usb_logs
+  return 1
 }
 
 case "$ACTION" in

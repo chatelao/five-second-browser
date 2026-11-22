@@ -71,5 +71,7 @@ IWD_DIR="$TMP_DIR/iwd" MOCK_MODE=1 PROXY_URL="http://127.0.0.1:${PORT}" \
 [[ -f "$TMP_DIR/iwd/ExternalHome5G.psk" ]] || { echo "ERROR: ExternalHome5G.psk not created from wifi.txt"; exit 1; }
 grep -q "Passphrase=SuperSecret123!" "$TMP_DIR/iwd/ExternalHome5G.psk" || { echo "ERROR: Passphrase missing in .psk"; exit 1; }
 grep -qx "ExternalHome5G" "$TMP_DIR/wifi_configured" || { echo "ERROR: wifi_configured not updated from wifi.txt"; exit 1; }
+grep -q "NETWORK_FOUND=yes" "$TMP_DIR/logs/network.log" || { echo "ERROR: NETWORK_FOUND=yes missing from network.log"; exit 1; }
+grep -q "CONNECTION_ESTABLISHED=yes" "$TMP_DIR/logs/network.log" || { echo "ERROR: CONNECTION_ESTABLISHED=yes missing from network.log"; exit 1; }
 
-echo "test_net_fast: shutdown cache + boot preload + wifi.txt import + proxy online transition in ${elapsed}ms"
+echo "test_net_fast: shutdown cache + boot preload + wifi.txt import + network.log + proxy online transition in ${elapsed}ms"

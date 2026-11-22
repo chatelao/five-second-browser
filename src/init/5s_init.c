@@ -19,8 +19,11 @@
 #include <unistd.h>
 
 #include <stdarg.h>
+#include <time.h>
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
+static char g_init_log_path[PATH_MAX + 64] = "";
+static struct timespec g_boot_ts = {0, 0};
 
 static void on_signal(int sig) {
     (void)sig;
@@ -41,6 +44,19 @@ static void log_boot(const char *fmt, ...) {
     if (kfd >= 0) {
         dprintf(kfd, "<6>%s\n", msg);
         close(kfd);
+    }
+
+    if (g_init_log_path[0] != '\0') {
+        struct timespec now = {0, 0};
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long ms = (now.tv_sec - g_boot_ts.tv_sec) * 1000L +
+                  (now.tv_nsec - g_boot_ts.tv_nsec) / 1000000L;
+        if (ms < 0) ms = 0;
+        int lfd = open(g_init_log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (lfd >= 0) {
+            dprintf(lfd, "[+%ld.%03lds] [init] %s\n", ms / 1000L, ms % 1000L, msg);
+            close(lfd);
+        }
     }
 }
 
@@ -243,8 +259,19 @@ int main(int argc, char **argv) {
     char bin_dir[PATH_MAX];
     resolve_bin_dir(argv[0], bin_dir, sizeof(bin_dir));
 
+    clock_gettime(CLOCK_MONOTONIC, &g_boot_ts);
+
     if (getpid() == 1 && !test_mode) {
         setup_pid1_mounts();
+    }
+
+    if (!test_mode) {
+        char logs_dir[PATH_MAX + 32];
+        mkdir(state_dir, 0755);
+        snprintf(logs_dir, sizeof(logs_dir), "%.4000s/logs", state_dir);
+        mkdir(logs_dir, 0755);
+        snprintf(g_init_log_path, sizeof(g_init_log_path), "%.4000s/logs/init.log", state_dir);
+        log_boot("5s-init: starting (pid=%d, state_dir=%s, bin_dir=%s)", (int)getpid(), state_dir, bin_dir);
     }
 
     struct sigaction sa;
@@ -270,9 +297,11 @@ int main(int argc, char **argv) {
     char proxy_bin[PATH_MAX + 64];
     char net_bin[PATH_MAX + 64];
     char zram_bin[PATH_MAX + 64];
+    char usb_log_bin[PATH_MAX + 64];
     snprintf(proxy_bin, sizeof(proxy_bin), "%s/cache_proxy.py", bin_dir);
     snprintf(net_bin, sizeof(net_bin), "%s/5s-net-fast.sh", bin_dir);
     snprintf(zram_bin, sizeof(zram_bin), "%s/zram-setup.sh", bin_dir);
+    snprintf(usb_log_bin, sizeof(usb_log_bin), "%s/5s-usb-log.sh", bin_dir);
 
     char state_arg[PATH_MAX];
     snprintf(state_arg, sizeof(state_arg), "%s", state_dir);
@@ -297,6 +326,7 @@ int main(int argc, char **argv) {
     if (access(zram_bin, X_OK) == 0) {
         char *zram_argv[] = {zram_bin, NULL};
         zram_pid = spawn_pinned(1, 3, 5, zram_bin, zram_argv);
+        if (!test_mode) log_boot("5s-init: spawned zram-setup.sh (pid=%d)", (int)zram_pid);
     }
 
     char optical_bin[PATH_MAX + 64];
@@ -305,6 +335,7 @@ int main(int argc, char **argv) {
     if (access(optical_bin, X_OK) == 0) {
         char *optical_argv[] = {optical_bin, NULL};
         optical_pid = spawn_pinned(1, 3, 15, optical_bin, optical_argv);
+        if (!test_mode) log_boot("5s-init: spawned 5s-optical-init.sh (pid=%d)", (int)optical_pid);
     }
 
     pid_t udev_pid = -1;
@@ -327,6 +358,11 @@ int main(int argc, char **argv) {
         log_boot("5s-init: ERROR 5s-browser-launch.sh not executable at %s", browser_bin);
     }
 
+    if (!test_mode && access(usb_log_bin, X_OK) == 0) {
+        char *rot_argv[] = {usb_log_bin, "--rotate", NULL};
+        (void)run_sync_cmd(usb_log_bin, rot_argv);
+    }
+
     /* Supervisor loop until shutdown signal */
     while (!g_shutdown_requested) {
         int status = 0;
@@ -338,6 +374,10 @@ int main(int argc, char **argv) {
                     if (WIFEXITED(status)) {
                         int rc = WEXITSTATUS(status);
                         log_boot("5s-init: browser exited with code %d", rc);
+                        if (access(usb_log_bin, X_OK) == 0) {
+                            char *sync_argv[] = {usb_log_bin, "--sync", NULL};
+                            (void)run_sync_cmd(usb_log_bin, sync_argv);
+                        }
                         if (rc == 0) {
                             sleep(15);
                             g_shutdown_requested = 1;
@@ -347,6 +387,10 @@ int main(int argc, char **argv) {
                     } else if (WIFSIGNALED(status)) {
                         log_boot("5s-init: browser killed by signal %d", WTERMSIG(status));
                         log_boot("5s-init: press Alt+F2 for shell or power button to shut down.");
+                        if (access(usb_log_bin, X_OK) == 0) {
+                            char *sync_argv[] = {usb_log_bin, "--sync", NULL};
+                            (void)run_sync_cmd(usb_log_bin, sync_argv);
+                        }
                     }
                 }
             } else if (exited == proxy_pid) {
@@ -356,10 +400,22 @@ int main(int argc, char **argv) {
                 }
             } else if (exited == net_pid) {
                 net_pid = -1;
+                if (!test_mode) {
+                    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    log_boot("5s-init: 5s-net-fast.sh exited (rc=%d)", rc);
+                }
             } else if (exited == zram_pid) {
                 zram_pid = -1;
+                if (!test_mode) {
+                    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    log_boot("5s-init: zram-setup.sh exited (rc=%d)", rc);
+                }
             } else if (exited == optical_pid) {
                 optical_pid = -1;
+                if (!test_mode) {
+                    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    log_boot("5s-init: 5s-optical-init.sh exited (rc=%d)", rc);
+                }
             } else if (exited == udev_pid) {
                 udev_pid = -1;
             } else if (exited == tty2_pid) {
@@ -370,6 +426,7 @@ int main(int argc, char **argv) {
     }
 
     /* Step 4: Graceful Shutdown Checkpoint */
+    if (!test_mode) log_boot("5s-init: shutdown requested, running checkpoint...");
     char ckpt_bin[PATH_MAX + 64];
     snprintf(ckpt_bin, sizeof(ckpt_bin), "%s/5s-checkpoint.sh", bin_dir);
     if (access(ckpt_bin, X_OK) == 0) {
@@ -385,6 +442,11 @@ int main(int argc, char **argv) {
 
     usleep(50000);
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
+
+    if (!test_mode && access(usb_log_bin, X_OK) == 0) {
+        char *sync_argv[] = {usb_log_bin, "--sync", NULL};
+        (void)run_sync_cmd(usb_log_bin, sync_argv);
+    }
 
     sync();
     if (getpid() == 1 && !test_mode) {

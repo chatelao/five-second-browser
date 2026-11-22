@@ -38,10 +38,17 @@ class ProxyState:
     def __init__(self, state_dir: str, online: bool, ui_js: str, port: int = 8555):
         self.state_dir = state_dir
         os.makedirs(self.state_dir, exist_ok=True)
+        self.logs_dir = os.path.join(self.state_dir, "logs")
+        os.makedirs(self.logs_dir, exist_ok=True)
         self.db_path = os.path.join(self.state_dir, "http_cache.sqlite")
         self.online = online
         self.port = port
         self.last_sync = 0.0
+        self.ssid = ""
+        self.ip = ""
+        self.gw = ""
+        self.internet_ok = online
+        self.net_error = ""
         self.ui_js = ui_js
         self.lock = threading.Lock()
         self.sse_clients: list[queue.Queue] = []
@@ -49,6 +56,27 @@ class ProxyState:
         self._init_db()
         self.disc_manager = DiscManager(state_dir=self.state_dir)
         self.disc_manager.start_monitor(self.broadcast_disc)
+        self.log_proxy("info", f"cache_proxy started (port={port}, online={online}, state_dir={state_dir})")
+
+    def _write_log(self, filename: str, level: str, msg: str) -> None:
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        line = f"[{ts}] [{level.upper()}] {msg}\n"
+        path = os.path.join(self.logs_dir, filename)
+        try:
+            with self.lock:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(line)
+        except OSError:
+            pass
+
+    def log_proxy(self, level: str, msg: str) -> None:
+        self._write_log("proxy.log", level, msg)
+
+    def log_app(self, level: str, source: str, msg: str, extra: dict | None = None) -> None:
+        detail = f"[{source}] {msg}"
+        if extra:
+            detail += f" {json.dumps(extra)}"
+        self._write_log("apps.log", level, detail)
 
     def is_wifi_configured(self) -> bool:
         if os.environ.get("SKIP_WIFI_SETUP") == "1":
@@ -62,6 +90,7 @@ class ProxyState:
         if "\n" in password or "\r" in password:
             return False, "Invalid Wi-Fi password"
 
+        self.log_proxy("info", f"configure_wifi requested for SSID='{ssid}'")
         mock_mode = os.environ.get("MOCK_MODE", "0") == "1"
         iwd_dir = os.environ.get("IWD_DIR") or (
             os.path.join(self.state_dir, "iwd") if mock_mode else "/var/lib/iwd"
@@ -84,15 +113,21 @@ class ProxyState:
         if os.path.exists(net_script):
             env = os.environ.copy()
             env["PROXY_URL"] = f"http://127.0.0.1:{self.port}"
-            subprocess.run(
+            res = subprocess.run(
                 [net_script, "--connect", ssid, "--state-dir", self.state_dir],
                 env=env,
+                capture_output=True,
+                text=True,
                 check=False,
-                timeout=15,
+                timeout=35,
             )
+            if res.returncode != 0:
+                self.log_proxy("error", f"5s-net-fast.sh --connect failed (rc={res.returncode}): {res.stderr.strip()}")
+                return False, f"Failed to connect to {ssid}"
 
         with open(os.path.join(self.state_dir, "wifi_configured"), "w", encoding="utf-8") as f:
             f.write(f"{ssid}\n")
+        self.log_proxy("info", f"configure_wifi succeeded for SSID='{ssid}'")
         return True, "Connected"
 
     def _connect(self) -> sqlite3.Connection:
@@ -226,8 +261,43 @@ class ProxyState:
                 body = resp.read()
                 self.put_cache(url, status, ctype, body)
                 return True
-        except Exception:
+        except Exception as exc:
+            self.log_proxy("error", f"fetch_and_cache({url}) failed: {exc}")
             return False
+
+    def update_network_state(self, data: dict) -> None:
+        is_online = bool(data.get("online", True))
+        ssid = str(data.get("ssid", "") or "")
+        ip = str(data.get("ip", "") or "")
+        gw = str(data.get("gw", "") or "")
+        internet_ok = bool(data.get("internet_ok", is_online))
+        net_error = str(data.get("error", "") or "")
+
+        with self.lock:
+            self.online = is_online
+            if ssid:
+                self.ssid = ssid
+            if ip:
+                self.ip = ip
+            if gw:
+                self.gw = gw
+            self.internet_ok = internet_ok
+            self.net_error = "" if is_online else net_error
+
+        if is_online:
+            self.log_proxy("info", f"network online: ssid='{self.ssid}' ip='{self.ip}' gw='{self.gw}'")
+            self.trigger_online_sync()
+        else:
+            self.log_proxy("warn", f"network offline/error: ssid='{self.ssid}' err='{self.net_error}'")
+            self.broadcast_sse(
+                "net_status",
+                {
+                    "online": False,
+                    "ssid": self.ssid,
+                    "ip": self.ip,
+                    "error": self.net_error,
+                },
+            )
 
     def trigger_online_sync(self) -> None:
         with self.lock:
@@ -252,6 +322,8 @@ class ProxyState:
                 {
                     "updated": updated,
                     "last_sync": self.last_sync,
+                    "ssid": self.ssid,
+                    "ip": self.ip,
                     "gmail_html": gmail_html,
                     "youtube_html": yt_html,
                 }
@@ -397,6 +469,226 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
     return html.encode("utf-8")
 
 
+def get_image_version() -> str:
+    env_ver = os.environ.get("APP_VERSION", "").strip()
+    if env_ver:
+        return env_ver
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        "/opt/5s-browser/VERSION",
+        os.path.abspath(os.path.join(here, "..", "VERSION")),
+        os.path.abspath(os.path.join(here, "..", "..", "VERSION")),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    ver = f.read().strip()
+                if ver:
+                    return ver
+            except OSError:
+                pass
+    return "0.7.0"
+
+
+def _tail_file(path: str, max_lines: int = 35) -> list[str]:
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+        return lines[-max_lines:]
+    except OSError:
+        return []
+
+
+def collect_diagnostics(state: ProxyState) -> dict:
+    uptime_s = None
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            uptime_s = float(f.read().split()[0])
+    except Exception:
+        pass
+
+    uname = os.uname()
+    log_files: list[dict] = []
+    if os.path.isdir(state.logs_dir):
+        for name in sorted(os.listdir(state.logs_dir)):
+            full = os.path.join(state.logs_dir, name)
+            if os.path.isfile(full):
+                try:
+                    log_files.append({"name": name, "bytes": os.path.getsize(full)})
+                except OSError:
+                    pass
+
+    return {
+        "version": get_image_version(),
+        "uptime_s": uptime_s,
+        "kernel": f"{uname.sysname} {uname.release} ({uname.machine})",
+        "hostname": uname.nodename,
+        "mock_mode": os.environ.get("MOCK_MODE", "0") == "1",
+        "state_dir": state.state_dir,
+        "network": {
+            "online": state.online,
+            "wifi_configured": state.is_wifi_configured(),
+            "ssid": state.ssid,
+            "ip": state.ip,
+            "gw": state.gw,
+            "internet_ok": state.internet_ok,
+            "net_error": state.net_error,
+            "last_sync": state.last_sync,
+            "cached_items": state.cached_count(),
+        },
+        "disc": state.disc_manager.probe(),
+        "logs": {
+            "files": log_files,
+            "network_tail": _tail_file(os.path.join(state.logs_dir, "network.log")),
+            "apps_tail": _tail_file(os.path.join(state.logs_dir, "apps.log")),
+            "init_tail": _tail_file(os.path.join(state.logs_dir, "init.log")),
+            "proxy_tail": _tail_file(os.path.join(state.logs_dir, "proxy.log")),
+            "timeline_tail": _tail_file(os.path.join(state.logs_dir, "boot-timeline.log")),
+        },
+    }
+
+
+def render_diag_html() -> bytes:
+    html = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>5s-browser Diagnostics</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b1220; color: #e2e8f0; font-size: 13px; }
+  header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 14px; }
+  h1 { margin: 0; font-size: 16px; color: #38bdf8; }
+  .actions { display: flex; gap: 8px; }
+  button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 5px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 12px; }
+  button:hover { background: #334155; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .card { background: #111a2e; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
+  .card h2 { margin: 0 0 8px 0; font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 3px 0; vertical-align: top; }
+  td:first-child { color: #94a3b8; width: 42%; }
+  .ok { color: #4ade80; font-weight: bold; }
+  .warn { color: #fbbf24; font-weight: bold; }
+  .err { color: #f87171; font-weight: bold; }
+  pre { margin: 6px 0 0 0; background: #070c16; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>5s-browser Diagnostics <span id="hdr-ver" style="color:#94a3b8;font-weight:normal;"></span></h1>
+    <div class="actions">
+      <button id="btn-refresh">Refresh</button>
+      <button id="btn-back">Back to App (F1)</button>
+    </div>
+  </header>
+  <div class="grid">
+    <div class="card">
+      <h2>System &amp; Image</h2>
+      <table id="tbl-sys"></table>
+    </div>
+    <div class="card">
+      <h2>Network Status</h2>
+      <table id="tbl-net"></table>
+    </div>
+    <div class="card">
+      <h2>CD / DVD / Blu-ray Drive</h2>
+      <table id="tbl-disc"></table>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>network.log</h2>
+      <pre id="log-net">(loading...)</pre>
+    </div>
+    <div class="card">
+      <h2>apps.log</h2>
+      <pre id="log-apps">(loading...)</pre>
+    </div>
+    <div class="card">
+      <h2>init.log / proxy.log</h2>
+      <pre id="log-init">(loading...)</pre>
+    </div>
+  </div>
+  <script>
+    function esc(s) {
+      return String(s === undefined || s === null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function row(k, v, cls) {
+      return "<tr><td>" + esc(k) + "</td><td class='" + (cls || "") + "'>" + esc(v) + "</td></tr>";
+    }
+    async function loadDiag() {
+      try {
+        const res = await fetch("/__5s__/diagnostics");
+        const d = await res.json();
+        document.getElementById("hdr-ver").textContent = "v" + d.version;
+        document.getElementById("tbl-sys").innerHTML = [
+          row("Release Version", d.version, "ok"),
+          row("Kernel", d.kernel),
+          row("Hostname", d.hostname),
+          row("Uptime", d.uptime_s !== null ? d.uptime_s.toFixed(1) + " s" : "n/a"),
+          row("State Dir", d.state_dir),
+          row("Log Files", (d.logs.files || []).map(f => f.name + " (" + f.bytes + "B)").join(", ") || "none")
+        ].join("");
+
+        const n = d.network || {};
+        document.getElementById("tbl-net").innerHTML = [
+          row("Online", n.online ? "YES (Live)" : "NO (Offline)", n.online ? "ok" : "warn"),
+          row("Wi-Fi Configured", n.wifi_configured ? "Yes" : "No"),
+          row("SSID", n.ssid || "(none)"),
+          row("IPv4 Address", n.ip || "(none)"),
+          row("Gateway", n.gw || "(none)"),
+          row("Internet / HTTPS", n.internet_ok ? "Reachable" : "Unreachable", n.internet_ok ? "ok" : "warn"),
+          row("Last Error", n.net_error || "none", n.net_error ? "err" : ""),
+          row("Cached Items", n.cached_items)
+        ].join("");
+
+        const c = d.disc || {};
+        document.getElementById("tbl-disc").innerHTML = [
+          row("Drive Present", c.drive_present ? "Yes (" + (c.device || "/dev/sr0") + ")" : "No", c.drive_present ? "ok" : "warn"),
+          row("Drive Model", c.model || "n/a"),
+          row("Capabilities", "DVD=" + (c.supports_dvd ? "Yes" : "No") + ", Blu-ray=" + (c.supports_bluray ? "Yes" : "No")),
+          row("Disc Inserted", c.disc_present ? "Yes (" + c.media_type + ")" : "No"),
+          row("Disc Label", c.label || "n/a"),
+          row("AACS KEYDB.cfg", c.aacs_keydb_present ? "Present" : "Not found"),
+          row("Playback", c.playing ? "Playing (" + c.playing_type + ")" : "Idle"),
+          row("Last Error", c.last_error || "none", c.last_error ? "err" : "")
+        ].join("");
+
+        document.getElementById("log-net").textContent = (d.logs.network_tail || []).join("\\n") || "(empty)";
+        document.getElementById("log-apps").textContent = (d.logs.apps_tail || []).join("\\n") || "(empty)";
+        const combined = [].concat(d.logs.init_tail || [], ["--- proxy.log ---"], d.logs.proxy_tail || []);
+        document.getElementById("log-init").textContent = combined.join("\\n") || "(empty)";
+      } catch (err) {
+        document.getElementById("log-apps").textContent = "Failed to load diagnostics: " + err;
+      }
+    }
+    document.getElementById("btn-refresh").addEventListener("click", loadDiag);
+    document.getElementById("btn-back").addEventListener("click", function () {
+      window.location.href = "/app";
+    });
+    window.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" || e.key === "F1") {
+        e.preventDefault();
+        window.location.href = "/app";
+      } else if (e.key === "F5") {
+        e.preventDefault();
+        loadDiag();
+      }
+    });
+    loadDiag();
+    setInterval(loadDiag, 4000);
+  </script>
+</body>
+</html>
+"""
+    return html.encode("utf-8")
+
+
 def make_handler(state: ProxyState):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -421,6 +713,15 @@ def make_handler(state: ProxyState):
                 self._send(200, "text/html; charset=utf-8", render_app_html(state, requested_tab=tab), "HIT")
                 return
 
+            if parsed.path in ("/diag", "/__5s__/diag"):
+                self._send(200, "text/html; charset=utf-8", render_diag_html())
+                return
+
+            if parsed.path == "/__5s__/diagnostics":
+                payload = json.dumps(collect_diagnostics(state)).encode("utf-8")
+                self._send(200, "application/json", payload)
+                return
+
             if parsed.path == "/__5s__/disc/status":
                 payload = json.dumps(state.disc_manager.probe()).encode("utf-8")
                 self._send(200, "application/json", payload)
@@ -432,6 +733,12 @@ def make_handler(state: ProxyState):
                         "online": state.online,
                         "cached_items": state.cached_count(),
                         "last_sync": state.last_sync,
+                        "wifi_configured": state.is_wifi_configured(),
+                        "ssid": state.ssid,
+                        "ip": state.ip,
+                        "gw": state.gw,
+                        "internet_ok": state.internet_ok,
+                        "net_error": state.net_error,
                     }
                 ).encode("utf-8")
                 self._send(200, "application/json", payload)
@@ -493,7 +800,25 @@ def make_handler(state: ProxyState):
             length = int(self.headers.get("Content-Length", "0") or "0")
             raw = self.rfile.read(length) if length > 0 else b"{}"
             if self.path == "/__5s__/net-online":
-                state.trigger_online_sync()
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                state.update_network_state(data)
+                self._send(200, "application/json", b'{"ok":true}')
+                return
+            if self.path == "/__5s__/app-log":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                level = str(data.get("level", "info"))
+                source = str(data.get("source", "app"))
+                message = str(data.get("message", ""))
+                extra = data.get("extra") if isinstance(data.get("extra"), dict) else None
+                state.log_app(level, source, message, extra)
                 self._send(200, "application/json", b'{"ok":true}')
                 return
             if self.path == "/__5s__/wifi-setup":
