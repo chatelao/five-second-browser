@@ -88,11 +88,11 @@ fi
 if ! chroot "$STAGE_ROOTFS" id -u kiosk >/dev/null 2>&1; then
   chroot "$STAGE_ROOTFS" useradd -r -m -d /home/kiosk -s /bin/sh kiosk
 fi
-chroot "$STAGE_ROOTFS" bash -c '
-  for grp in video render input audio tty; do
-    getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" kiosk || true
-  done
-'
+for grp in video render input audio tty; do
+  if chroot "$STAGE_ROOTFS" getent group "$grp" >/dev/null 2>&1; then
+    chroot "$STAGE_ROOTFS" usermod -aG "$grp" kiosk || true
+  fi
+done
 
 echo "5s-browser" > "$STAGE_ROOTFS/etc/hostname"
 

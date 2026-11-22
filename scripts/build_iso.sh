@@ -60,11 +60,11 @@ chroot "$ROOTFS" apt-get clean
 if ! chroot "$ROOTFS" id -u kiosk >/dev/null 2>&1; then
   chroot "$ROOTFS" useradd -r -m -d /home/kiosk -s /bin/sh kiosk
 fi
-chroot "$ROOTFS" bash -c '
-  for grp in video render input audio tty; do
-    getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" kiosk || true
-  done
-'
+for grp in video render input audio tty; do
+  if chroot "$ROOTFS" getent group "$grp" >/dev/null 2>&1; then
+    chroot "$ROOTFS" usermod -aG "$grp" kiosk || true
+  fi
+done
 
 echo "5s-browser" > "$ROOTFS/etc/hostname"
 
