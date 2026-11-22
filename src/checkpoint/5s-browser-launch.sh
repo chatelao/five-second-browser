@@ -92,14 +92,68 @@ for _ in $(seq 1 200); do
   sleep 0.05
 done
 
+dump_debug_log() {
+  local reason="${1:-snapshot}"
+  local efi_log="/boot/efi/debug.log"
+  local local_log="$STATE_DIR/debug.log"
+
+  {
+    echo "=== 5s-browser debug (${reason}) ==="
+    echo "uptime: $(cat /proc/uptime 2>/dev/null || true)"
+    echo "uname: $(uname -a 2>/dev/null || true)"
+    echo "--- proxy status ---"
+    curl -fsS -m 1 "${PROXY_URL}/__5s__/status" 2>&1 || echo "(proxy unreachable)"
+    echo ""
+    echo "--- devices (/dev/dri, /dev/input, /dev/fb*) ---"
+    ls -la /dev/dri /dev/input /dev/fb* 2>&1 || true
+    echo "--- processes ---"
+    ps -eo pid,ppid,stat,comm,args 2>&1 || ps 2>&1 || true
+    echo "--- cage.log (last 120 lines) ---"
+    tail -n 120 "$STATE_DIR/cage.log" 2>&1 || echo "(no cage.log)"
+    echo "--- dmesg (last 80 lines) ---"
+    dmesg 2>/dev/null | tail -n 80 || true
+  } > "$local_log" 2>&1 || true
+
+  if [[ ! -d /boot/efi/EFI ]] && [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
+    mkdir -p /boot/efi
+    mount /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
+      mount /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
+  fi
+  if [[ -d /boot/efi ]] && cp "$local_log" "$efi_log" 2>/dev/null; then
+    sync 2>/dev/null || true
+  fi
+}
+
 DRI_NODES="$(compgen -G '/dev/dri/card*' | tr '\n' ' ' || true)"
 FB_NODES="$(compgen -G '/dev/fb*' | tr '\n' ' ' || true)"
 log_msg "5s-browser: starting Cage + Chromium (dri=[${DRI_NODES:-none}] fb=[${FB_NODES:-none}] proxy=${PROXY_URL}/app)..."
 
 set +e
-/usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1
+/usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+CAGE_PID=$!
+
+(
+  sleep 5
+  kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "5s"
+  sleep 7
+  if kill -0 "$CAGE_PID" 2>/dev/null && ! pidof chromium >/dev/null 2>&1; then
+    log_msg "5s-browser: watchdog: chromium not running after 12s; last cage.log lines:"
+    while IFS= read -r line; do
+      log_msg "  [cage] $line"
+    done < <(tail -n 20 "$STATE_DIR/cage.log" 2>/dev/null || true)
+  fi
+  sleep 3
+  kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "15s"
+) >/dev/null 2>&1 &
+WATCHDOG_PID=$!
+
+wait "$CAGE_PID"
 RC=$?
+kill "$WATCHDOG_PID" 2>/dev/null || true
+wait "$WATCHDOG_PID" 2>/dev/null || true
 set -e
+
+dump_debug_log "exit-${RC}"
 log_msg "5s-browser: cage exited with code ${RC}. Last log lines:"
 while IFS= read -r line; do
   log_msg "  [cage] $line"

@@ -189,6 +189,30 @@ static pid_t spawn_udev_trigger_async(void) {
     return pid;
 }
 
+static pid_t spawn_debug_tty2(void) {
+    if (access("/dev/tty2", R_OK | W_OK) != 0 || access("/bin/bash", X_OK) != 0) {
+        return -1;
+    }
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int fd = open("/dev/tty2", O_RDWR | O_NOCTTY);
+        if (fd >= 0) {
+            (void)setsid();
+            (void)ioctl(fd, TIOCSCTTY, 1);
+            (void)dup2(fd, STDIN_FILENO);
+            (void)dup2(fd, STDOUT_FILENO);
+            (void)dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO) close(fd);
+        }
+        setenv("TERM", "linux", 1);
+        char *sh_argv[] = {"/bin/bash", "-i", NULL};
+        execv("/bin/bash", sh_argv);
+        _exit(127);
+    }
+    return pid;
+}
+
 int main(int argc, char **argv) {
     const char *state_dir = getenv("STATE_DIR");
     if (!state_dir || state_dir[0] == '\0') {
@@ -264,8 +288,10 @@ int main(int argc, char **argv) {
     }
 
     pid_t udev_pid = -1;
+    pid_t tty2_pid = -1;
     if (getpid() == 1 && !test_mode) {
         udev_pid = spawn_udev_trigger_async();
+        tty2_pid = spawn_debug_tty2();
     }
 
     /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
@@ -308,6 +334,8 @@ int main(int argc, char **argv) {
                 zram_pid = -1;
             } else if (exited == udev_pid) {
                 udev_pid = -1;
+            } else if (exited == tty2_pid) {
+                tty2_pid = -1;
             }
         }
         usleep(20000);
@@ -324,6 +352,7 @@ int main(int argc, char **argv) {
     if (browser_pid > 0) kill(browser_pid, SIGTERM);
     if (net_pid > 0) kill(net_pid, SIGTERM);
     if (proxy_pid > 0) kill(proxy_pid, SIGTERM);
+    if (tty2_pid > 0) kill(tty2_pid, SIGTERM);
 
     usleep(50000);
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
