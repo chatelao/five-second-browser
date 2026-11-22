@@ -17,12 +17,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/apt-archives
+          key: ${{ runner.os }}-apt-release-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-release-
+
+      - name: Cache debootstrap packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/debootstrap
+          key: ${{ runner.os }}-debootstrap-bookworm-${{ hashFiles('scripts/build_iso.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-debootstrap-bookworm-
+
       - name: Install build, test, and packaging dependencies
         run: |
+          mkdir -p ~/.cache/apt-archives/partial
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
           sudo apt-get update
-          sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl \
+          sudo apt-get install -y \
+            -o Dir::Cache::archives="$HOME/.cache/apt-archives" \
+            -o APT::Keep-Downloaded-Packages="true" \
+            gcc make python3 lz4 dpkg shellcheck binutils curl \
             debootstrap squashfs-tools grub-pc-bin grub-efi-amd64-bin grub-common xorriso mtools dosfstools debian-archive-keyring parted xz-utils e2fsprogs \
             qemu-system-x86 ovmf linux-image-virtual cpio gzip
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/apt-archives
+          rm -rf ~/.cache/apt-archives/partial ~/.cache/apt-archives/lock
 
       - name: Lint, build, test, QEMU boot check, and package assets
         run: |
@@ -40,7 +63,9 @@ jobs:
           make package
           bash tests/test_release_bundle.sh
           REQUIRE_QEMU=1 bash tests/test_qemu_boot.sh
-          sudo VERSION="$REL_VERSION" bash scripts/build_iso.sh
+          mkdir -p ~/.cache/debootstrap
+          sudo VERSION="$REL_VERSION" DEBOOTSTRAP_CACHE_DIR="$HOME/.cache/debootstrap" bash scripts/build_iso.sh
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/debootstrap
           sudo VERSION="$REL_VERSION" BASE_ROOTFS="$PWD/build/iso_work/rootfs" bash scripts/build_usb_img.sh
           sudo REQUIRE_QEMU=1 bash tests/test_qemu_usb_uefi.sh
 

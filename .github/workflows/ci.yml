@@ -14,10 +14,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/apt-archives
+          key: ${{ runner.os }}-apt-ci-build-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-ci-build-
+
       - name: Install build and test dependencies
         run: |
+          mkdir -p ~/.cache/apt-archives/partial
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
           sudo apt-get update
-          sudo apt-get install -y gcc make python3 lz4 dpkg shellcheck binutils curl
+          sudo apt-get install -y \
+            -o Dir::Cache::archives="$HOME/.cache/apt-archives" \
+            -o APT::Keep-Downloaded-Packages="true" \
+            gcc make python3 lz4 dpkg shellcheck binutils curl
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/apt-archives
+          rm -rf ~/.cache/apt-archives/partial ~/.cache/apt-archives/lock
 
       - name: Lint shell scripts and Python files
         run: |
@@ -60,10 +75,25 @@ jobs:
           name: 5s-browser-dist
           path: dist
 
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/apt-archives
+          key: ${{ runner.os }}-apt-ci-qemu-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-ci-qemu-
+
       - name: Install QEMU, Linux kernel, and initramfs tools
         run: |
+          mkdir -p ~/.cache/apt-archives/partial
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
           sudo apt-get update
-          sudo apt-get install -y gcc qemu-system-x86 ovmf linux-image-virtual cpio gzip dpkg python3
+          sudo apt-get install -y \
+            -o Dir::Cache::archives="$HOME/.cache/apt-archives" \
+            -o APT::Keep-Downloaded-Packages="true" \
+            gcc qemu-system-x86 ovmf linux-image-virtual cpio gzip dpkg python3
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/apt-archives
+          rm -rf ~/.cache/apt-archives/partial ~/.cache/apt-archives/lock
 
       - name: Run QEMU Pentium 3825U PID 1 boot & affinity test
         env:

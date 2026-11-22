@@ -22,11 +22,16 @@ mkdir -p "$ROOTFS" "$ISO_DIR/live" "$ISO_DIR/boot/grub"
 source "$ROOT_DIR/scripts/trim_rootfs.sh"
 
 echo "1. Bootstrapping minimal Debian 12 (bookworm) amd64 rootfs..."
-debootstrap \
-  --arch=amd64 \
-  --variant=minbase \
-  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates \
-  bookworm "$ROOTFS" http://deb.debian.org/debian
+DEBOOTSTRAP_ARGS=(
+  --arch=amd64
+  --variant=minbase
+  --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates
+)
+if [[ -n "${DEBOOTSTRAP_CACHE_DIR:-}" ]]; then
+  mkdir -p "$DEBOOTSTRAP_CACHE_DIR"
+  DEBOOTSTRAP_ARGS+=(--cache-dir="$DEBOOTSTRAP_CACHE_DIR")
+fi
+debootstrap "${DEBOOTSTRAP_ARGS[@]}" bookworm "$ROOTFS" http://deb.debian.org/debian
 
 configure_dpkg_filters "$ROOTFS"
 
