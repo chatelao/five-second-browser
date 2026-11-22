@@ -131,7 +131,7 @@ QEMU_ARGS=(
   -cpu "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,-avx,-avx2"
   -smp 4
   -m 4096
-  -vga std
+  -vga virtio
   -display none
   -net none
   -serial "file:${SERIAL_LOG}"
