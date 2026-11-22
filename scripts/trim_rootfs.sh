@@ -53,10 +53,19 @@ trim_rootfs() {
       -exec rm -rf {} + 2>/dev/null || true
   fi
 
-  if [[ -d "$rootfs/usr/lib/chromium/locales" ]]; then
-    find "$rootfs/usr/lib/chromium/locales" -mindepth 1 -maxdepth 1 \
-      -name '*.pak' ! -name 'en-US.pak' ! -name 'de.pak' \
-      -delete 2>/dev/null || true
+  if [[ -d "$rootfs/usr/lib/chromium" ]]; then
+    echo "   [trim] Pruning Chromium locales, 200% HiDPI assets, SwiftShader Vulkan, and Qt shims..."
+    if [[ -d "$rootfs/usr/lib/chromium/locales" ]]; then
+      find "$rootfs/usr/lib/chromium/locales" -mindepth 1 -maxdepth 1 \
+        -name '*.pak' ! -name 'en-US.pak' ! -name 'de.pak' \
+        -delete 2>/dev/null || true
+    fi
+    rm -f \
+      "$rootfs/usr/lib/chromium/chrome_200_percent.pak" \
+      "$rootfs/usr/lib/chromium/libvk_swiftshader.so" \
+      "$rootfs/usr/lib/chromium/vk_swiftshader_icd.json" \
+      "$rootfs/usr/lib/chromium/libqt5_shim.so" \
+      "$rootfs/usr/lib/chromium/libqt6_shim.so" 2>/dev/null || true
   fi
 
   echo "   [trim] Pruning firmware to Intel AC-3165 (iwlwifi-7265*)..."
