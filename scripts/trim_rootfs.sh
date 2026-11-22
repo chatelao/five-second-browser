@@ -143,9 +143,9 @@ trim_rootfs() {
       "$kmod/drivers/scsi/smartpqi" \
       "$kmod/drivers/scsi/aacraid" 2>/dev/null || true
 
-    # Prune drivers/media except cec.ko (required by drm_display_helper -> i915)
+    # Prune drivers/media except cec.ko and rc-core.ko (required by drm_display_helper -> i915)
     if [[ -d "$kmod/drivers/media" ]]; then
-      find "$kmod/drivers/media" -mindepth 1 -maxdepth 1 ! -name 'cec' -exec rm -rf {} + 2>/dev/null || true
+      find "$kmod/drivers/media" -mindepth 1 -maxdepth 1 ! -name 'cec' ! -name 'rc' -exec rm -rf {} + 2>/dev/null || true
     fi
 
     chroot "$rootfs" depmod -a "$kver"
