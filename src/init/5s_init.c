@@ -146,7 +146,7 @@ static void attach_tty1_console(void) {
     }
 }
 
-static void setup_pid1_mounts(const char *bin_dir) {
+static void setup_pid1_mounts(void) {
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
     mkdir("/proc", 0755);
     mkdir("/sys", 0755);
@@ -167,20 +167,26 @@ static void setup_pid1_mounts(const char *bin_dir) {
     if (access("/lib/systemd/systemd-udevd", X_OK) == 0) {
         char *udevd_argv[] = {"/lib/systemd/systemd-udevd", "--daemon", NULL};
         (void)run_sync_cmd("/lib/systemd/systemd-udevd", udevd_argv);
-        if (access("/usr/bin/udevadm", X_OK) == 0) {
-            char *trig_sub_argv[] = {"/usr/bin/udevadm", "trigger", "--type=subsystems", "--action=add", NULL};
-            char *trig_dev_argv[] = {"/usr/bin/udevadm", "trigger", "--type=devices", "--action=add", NULL};
-            (void)run_sync_cmd("/usr/bin/udevadm", trig_sub_argv);
-            (void)run_sync_cmd("/usr/bin/udevadm", trig_dev_argv);
-        }
     }
+}
 
-    char zram_path[PATH_MAX + 64];
-    snprintf(zram_path, sizeof(zram_path), "%s/zram-setup.sh", bin_dir);
-    if (access(zram_path, X_OK) == 0) {
-        char *zram_argv[] = {zram_path, NULL};
-        (void)run_sync_cmd(zram_path, zram_argv);
+static pid_t spawn_udev_trigger_async(void) {
+    if (access("/usr/bin/udevadm", X_OK) != 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        pin_cpus(1, 3);
+        errno = 0;
+        if (nice(10) == -1 && errno != 0) {
+            /* Best-effort priority adjustment */
+        }
+        char *trig_sub_argv[] = {"/usr/bin/udevadm", "trigger", "--type=subsystems", "--action=add", NULL};
+        char *trig_dev_argv[] = {"/usr/bin/udevadm", "trigger", "--type=devices", "--action=add", NULL};
+        (void)run_sync_cmd("/usr/bin/udevadm", trig_sub_argv);
+        (void)run_sync_cmd("/usr/bin/udevadm", trig_dev_argv);
+        _exit(0);
     }
+    return pid;
 }
 
 int main(int argc, char **argv) {
@@ -202,7 +208,7 @@ int main(int argc, char **argv) {
     resolve_bin_dir(argv[0], bin_dir, sizeof(bin_dir));
 
     if (getpid() == 1 && !test_mode) {
-        setup_pid1_mounts(bin_dir);
+        setup_pid1_mounts();
     }
 
     struct sigaction sa;
@@ -227,8 +233,10 @@ int main(int argc, char **argv) {
     /* Step 2: Track B on Physical Core 1 (CPUs 1, 3) */
     char proxy_bin[PATH_MAX + 64];
     char net_bin[PATH_MAX + 64];
+    char zram_bin[PATH_MAX + 64];
     snprintf(proxy_bin, sizeof(proxy_bin), "%s/cache_proxy.py", bin_dir);
     snprintf(net_bin, sizeof(net_bin), "%s/5s-net-fast.sh", bin_dir);
+    snprintf(zram_bin, sizeof(zram_bin), "%s/zram-setup.sh", bin_dir);
 
     char state_arg[PATH_MAX];
     snprintf(state_arg, sizeof(state_arg), "%s", state_dir);
@@ -247,6 +255,17 @@ int main(int argc, char **argv) {
         char *net_argv[] = {net_bin, "--boot", "--state-dir", state_arg, NULL};
         net_pid = spawn_pinned(1, 3, 10, net_bin, net_argv);
         if (!test_mode) log_boot("5s-init: spawned 5s-net-fast.sh (pid=%d)", (int)net_pid);
+    }
+
+    pid_t zram_pid = -1;
+    if (access(zram_bin, X_OK) == 0) {
+        char *zram_argv[] = {zram_bin, NULL};
+        zram_pid = spawn_pinned(1, 3, 5, zram_bin, zram_argv);
+    }
+
+    pid_t udev_pid = -1;
+    if (getpid() == 1 && !test_mode) {
+        udev_pid = spawn_udev_trigger_async();
     }
 
     /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
@@ -285,6 +304,10 @@ int main(int argc, char **argv) {
                 }
             } else if (exited == net_pid) {
                 net_pid = -1;
+            } else if (exited == zram_pid) {
+                zram_pid = -1;
+            } else if (exited == udev_pid) {
+                udev_pid = -1;
             }
         }
         usleep(20000);

@@ -25,20 +25,13 @@ log_msg() {
 
 mkdir -p "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
 
-# Wait for local SQLite WAL proxy to accept connections
-if [[ "$MOCK_MODE" != "1" ]]; then
-  log_msg "5s-browser: waiting for local cache proxy at ${PROXY_URL}..."
-fi
-PROXY_READY=0
-for _ in $(seq 1 150); do
-  if curl -fsS -m 1 "${PROXY_URL}/__5s__/status" >/dev/null 2>&1; then
-    PROXY_READY=1
-    break
-  fi
-  sleep 0.02
-done
-
 if [[ "$MOCK_MODE" == "1" ]]; then
+  for _ in $(seq 1 150); do
+    if curl -fsS -m 1 "${PROXY_URL}/__5s__/status" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.02
+  done
   curl -fsS -m 2 "${PROXY_URL}/app" > "$STATE_DIR/browser_app.html"
   python3 -c 'import time; print(int(time.monotonic()*1000))' > "$STATE_DIR/browser_ready.ts"
   while true; do
@@ -46,6 +39,7 @@ if [[ "$MOCK_MODE" == "1" ]]; then
   done
 fi
 
+PROXY_READY="async"
 log_msg "5s-browser: proxy_ready=${PROXY_READY}, preparing Wayland & DRM..."
 
 CHROMIUM_FLAGS=(

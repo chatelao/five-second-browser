@@ -27,6 +27,7 @@ Choose **either** the 100% portable USB 3.0 / SD card image (leaves your interna
   2. Flash it directly to a USB 3.0 stick (recommended for ~2.5 s cold boot) or SD card (≥ 4 GB) using **BalenaEtcher**, **Rufus**, or **Raspberry Pi Imager** (they decompress `.img.xz` automatically).
   3. *(Optional)* Open the small **`5S-USB-EFI`** FAT32 drive on any Windows/Mac/Linux PC and edit **`wifi.txt`** with `SSID=YourWiFiName` and `PASSWORD=YourWiFiPassword` to pre-configure Wi-Fi before booting.
   4. Insert the USB stick into a **SuperSpeed USB 3.0 port** (or insert the SD card), power on, and press **`F9`** to select it in the HP Boot Menu. *(Supports both UEFI `F.77` and Legacy Boot modes; disable Secure Boot in `F10` BIOS Setup if prompted.)*
+  5. *(Recommended for fastest power-on)* In **`F10` BIOS Setup → System Configuration → Boot Options**, set **Legacy Support = `Disabled`**, **POST Hotkey Delay = `0 sec`**, **Network Boot = `Disabled`**, and move **USB Diskette on Key/USB Hard Disk** to #1 in **UEFI Boot Order** (skips the multi-second HP pre-boot delay and `F9` menu).
 
 - **Option B — Install Permanently to Internal Drive (`/dev/sda`):**
   1. Download **`5s-browser-0.4.6-amd64.iso`**, flash to a USB stick, and boot with **`F9`**.
