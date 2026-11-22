@@ -61,6 +61,49 @@
     pill.style.color = color;
   }
 
+  function setWifiStatus(ssid, signalPercent, signalDbm) {
+    const el = document.getElementById("wifi-status");
+    if (!el) return;
+    if (ssid && signalPercent !== null && signalPercent !== undefined) {
+      el.textContent = "\uD83D\uDCF6 " + ssid + " (" + signalPercent + "%)";
+      el.title = signalDbm !== null && signalDbm !== undefined
+        ? (ssid + " (" + signalPercent + "%, " + signalDbm + " dBm)")
+        : (ssid + " (" + signalPercent + "%)");
+    } else if (ssid) {
+      el.textContent = "\uD83D\uDCF6 " + ssid;
+      el.title = ssid;
+    } else {
+      el.textContent = "\uD83D\uDCF6 No Wi-Fi";
+      el.title = "Wi-Fi Network & Signal";
+    }
+  }
+
+  function updateClock() {
+    const el = document.getElementById("topbar-clock");
+    if (!el) return;
+    try {
+      el.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (_) {
+      const d = new Date();
+      el.textContent = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+  }
+
+  function refreshTopbarStatus() {
+    fetch("/__5s__/status")
+      .then(function (r) { return r.json(); })
+      .then(function (st) {
+        setWifiStatus(st.ssid, st.signal_percent, st.signal_dbm);
+        if (st.online) {
+          setStatus("\u25CF Live", "#4ade80");
+        } else {
+          const msg = st.net_error ? ("\u25CF " + st.net_error) : "\u25CF Cached (Connecting...)";
+          setStatus(msg, st.net_error ? "#f87171" : "#fbbf24");
+        }
+      })
+      .catch(function () {});
+  }
+
   function renderDiscState(data) {
     const titleEl = document.getElementById("disc-title");
     const capsEl = document.getElementById("disc-caps");
@@ -209,6 +252,11 @@
       refreshDiscStatus();
     }
 
+    updateClock();
+    setInterval(updateClock, 1000);
+    refreshTopbarStatus();
+    setInterval(refreshTopbarStatus, 3000);
+
     // 4. Live SSE Delta & Disc Listener
     if (typeof EventSource !== "undefined") {
       const es = new EventSource("/__5s__/events");
@@ -216,6 +264,9 @@
         setStatus("● Live", "#4ade80");
         try {
           const data = JSON.parse(ev.data);
+          if (data.ssid !== undefined) {
+            setWifiStatus(data.ssid, data.signal_percent, data.signal_dbm);
+          }
           if (data.gmail_html) {
             const g = document.getElementById("gmail-feed");
             if (g) g.innerHTML = data.gmail_html;
@@ -229,6 +280,9 @@
       es.addEventListener("net_status", function (ev) {
         try {
           const data = JSON.parse(ev.data);
+          if (data.ssid !== undefined) {
+            setWifiStatus(data.ssid, data.signal_percent, data.signal_dbm);
+          }
           if (data.online) {
             setStatus("● Live", "#4ade80");
           } else {

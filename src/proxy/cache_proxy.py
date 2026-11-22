@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import html as html_lib
 import json
 import os
 import queue
@@ -57,6 +58,9 @@ class ProxyState:
         self.ssid = ""
         self.ip = ""
         self.gw = ""
+        self.signal_percent: int | None = None
+        self.signal_dbm: int | None = None
+        self._last_wifi_probe = 0.0
         self.internet_ok = online
         self.net_error = ""
         self.ui_js = ui_js
@@ -225,8 +229,112 @@ class ProxyState:
 
         with open(os.path.join(self.state_dir, "wifi_configured"), "w", encoding="utf-8") as f:
             f.write(f"{ssid}\n")
+        with self.lock:
+            self.ssid = ssid
         self.log_proxy("info", f"configure_wifi succeeded for SSID='{ssid}'")
         return True, "Connected"
+
+    def get_wifi_info(self, allow_subprocess: bool = False) -> dict:
+        with self.lock:
+            ssid = self.ssid
+            pct = self.signal_percent
+            dbm = self.signal_dbm
+            online = self.online
+
+        if not ssid:
+            cfg_path = os.path.join(self.state_dir, "wifi_configured")
+            if os.path.isfile(cfg_path):
+                try:
+                    with open(cfg_path, "r", encoding="utf-8", errors="replace") as f:
+                        ssid = f.readline().strip()
+                except OSError:
+                    pass
+
+        if os.environ.get("MOCK_MODE", "0") == "1":
+            if pct is None and dbm is None and online and ssid:
+                pct = 82
+                dbm = -55
+            return {"ssid": ssid, "signal_percent": pct, "signal_dbm": dbm}
+
+        # Fast path: read /proc/net/wireless (<0.1ms, no subprocess)
+        if os.path.isfile("/proc/net/wireless"):
+            try:
+                with open("/proc/net/wireless", "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.read().splitlines()
+                for ln in lines[2:]:
+                    if ":" not in ln:
+                        continue
+                    iface_part, rest = ln.split(":", 1)
+                    iface_name = iface_part.strip()
+                    if not iface_name:
+                        continue
+                    cols = rest.split()
+                    if len(cols) >= 3:
+                        try:
+                            link_val = float(cols[1].rstrip("."))
+                            level_val = float(cols[2].rstrip("."))
+                            if level_val > 110:
+                                level_val -= 256.0
+                            dbm_cand = int(round(level_val)) if level_val < 0 else None
+                            if 0 < link_val <= 70:
+                                pct_cand = min(100, max(0, int(round(link_val * 100.0 / 70.0))))
+                            elif dbm_cand is not None:
+                                pct_cand = min(100, max(0, int(round(2 * (dbm_cand + 100)))))
+                            else:
+                                pct_cand = None
+                            if pct_cand is not None:
+                                pct = pct_cand
+                            if dbm_cand is not None:
+                                dbm = dbm_cand
+                            if iface_name.startswith("wl"):
+                                break
+                        except ValueError:
+                            continue
+            except OSError:
+                pass
+
+        # Fallback: iwctl station <iface> show (rate-limited, only when allow_subprocess=True)
+        now = time.monotonic()
+        if allow_subprocess and (pct is None or not ssid) and (now - self._last_wifi_probe >= 5.0):
+            self._last_wifi_probe = now
+            iface = "wlan0"
+            try:
+                for name in sorted(os.listdir("/sys/class/net")):
+                    if name.startswith("wl"):
+                        iface = name
+                        break
+            except OSError:
+                pass
+            try:
+                res = subprocess.run(
+                    ["iwctl", "station", iface, "show"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1.5,
+                    check=False,
+                )
+                ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+                for raw_ln in (res.stdout or "").splitlines():
+                    clean = ansi_re.sub("", raw_ln).strip()
+                    m_ssid = re.match(r"Connected network\s+(.+)$", clean, re.IGNORECASE)
+                    if m_ssid and not ssid:
+                        ssid = m_ssid.group(1).strip()
+                    m_rssi = re.match(r"RSSI\s+(-?\d+)\s*dBm", clean, re.IGNORECASE)
+                    if m_rssi:
+                        dbm = int(m_rssi.group(1))
+                        pct = min(100, max(0, 2 * (dbm + 100)))
+                if ssid or pct is not None or dbm is not None:
+                    with self.lock:
+                        if ssid and not self.ssid:
+                            self.ssid = ssid
+                        if pct is not None:
+                            self.signal_percent = pct
+                        if dbm is not None:
+                            self.signal_dbm = dbm
+            except Exception:
+                pass
+
+        return {"ssid": ssid, "signal_percent": pct, "signal_dbm": dbm}
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=5.0, check_same_thread=False)
@@ -370,6 +478,8 @@ class ProxyState:
         gw = str(data.get("gw", "") or "")
         internet_ok = bool(data.get("internet_ok", is_online))
         net_error = str(data.get("error", "") or "")
+        sig_pct = data.get("signal_percent")
+        sig_dbm = data.get("signal_dbm")
 
         with self.lock:
             self.online = is_online
@@ -379,6 +489,12 @@ class ProxyState:
                 self.ip = ip
             if gw:
                 self.gw = gw
+            if isinstance(sig_pct, (int, float)):
+                self.signal_percent = min(100, max(0, int(sig_pct)))
+            if isinstance(sig_dbm, (int, float)):
+                self.signal_dbm = int(sig_dbm)
+                if not isinstance(sig_pct, (int, float)):
+                    self.signal_percent = min(100, max(0, 2 * (self.signal_dbm + 100)))
             self.internet_ok = internet_ok
             self.net_error = "" if is_online else net_error
 
@@ -386,12 +502,15 @@ class ProxyState:
             self.log_proxy("info", f"network online: ssid='{self.ssid}' ip='{self.ip}' gw='{self.gw}'")
             self.trigger_online_sync()
         else:
+            wifi = self.get_wifi_info(allow_subprocess=False)
             self.log_proxy("warn", f"network offline/error: ssid='{self.ssid}' err='{self.net_error}'")
             self.broadcast_sse(
                 "net_status",
                 {
                     "online": False,
-                    "ssid": self.ssid,
+                    "ssid": wifi["ssid"],
+                    "signal_percent": wifi["signal_percent"],
+                    "signal_dbm": wifi["signal_dbm"],
                     "ip": self.ip,
                     "error": self.net_error,
                 },
@@ -416,11 +535,14 @@ class ProxyState:
             with self.lock:
                 self.last_sync = time.time()
             gmail_html, yt_html = self.get_app_state()
+            wifi = self.get_wifi_info(allow_subprocess=False)
             self.broadcast_delta(
                 {
                     "updated": updated,
                     "last_sync": self.last_sync,
-                    "ssid": self.ssid,
+                    "ssid": wifi["ssid"],
+                    "signal_percent": wifi["signal_percent"],
+                    "signal_dbm": wifi["signal_dbm"],
                     "ip": self.ip,
                     "gmail_html": gmail_html,
                     "youtube_html": yt_html,
@@ -561,6 +683,14 @@ def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
     return html.encode("utf-8")
 
 
+def format_wifi_status(ssid: str, signal_percent: int | None) -> str:
+    if ssid and signal_percent is not None:
+        return f"\U0001f4f6 {ssid} ({signal_percent}%)"
+    if ssid:
+        return f"\U0001f4f6 {ssid}"
+    return "\U0001f4f6 No Wi-Fi"
+
+
 def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
     features = state.get_features()
     needs_wifi = features["gmail"] or features["youtube"]
@@ -578,6 +708,13 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
     gmail_html, yt_html = state.get_app_state()
     pill_text = "● Live" if state.online else "● Cached (Connecting...)"
     pill_color = "#4ade80" if state.online else "#fbbf24"
+    wifi = state.get_wifi_info(allow_subprocess=False)
+    wifi_text = html_lib.escape(format_wifi_status(wifi["ssid"], wifi["signal_percent"]))
+    wifi_title = html_lib.escape(
+        f"{wifi['ssid']} ({wifi['signal_percent']}%, {wifi['signal_dbm']} dBm)"
+        if wifi["ssid"] and wifi["signal_percent"] is not None and wifi["signal_dbm"] is not None
+        else (wifi["ssid"] or "Wi-Fi Network & Signal")
+    )
 
     tab_buttons = []
     if features["gmail"]:
@@ -636,6 +773,10 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
   .tabs {{ display: flex; gap: 6px; }}
   .tab-btn {{ background: #334155; color: #e2e8f0; border: none; height: 20px; padding: 0 10px; cursor: pointer; font-size: 12px; }}
   .tab-btn.active {{ background: #3b82f6; color: #fff; font-weight: bold; }}
+  .topbar-right {{ display: flex; align-items: center; gap: 12px; font-size: 12px; }}
+  #wifi-status {{ color: #94a3b8; white-space: nowrap; }}
+  #topbar-clock {{ color: #e2e8f0; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  #status-pill {{ white-space: nowrap; }}
   #viewport {{ position: relative; width: 100%; height: calc(100vh - 24px); }}
   .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; visibility: hidden; pointer-events: none; }}
   .pane.active {{ visibility: visible; pointer-events: auto; }}
@@ -658,7 +799,11 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
     <div class="tabs">
       {tabs_html}
     </div>
-    <div id="status-pill" style="color: {pill_color};">{pill_text}</div>
+    <div class="topbar-right">
+      <div id="wifi-status" title="{wifi_title}">{wifi_text}</div>
+      <div id="topbar-clock" title="Local Time">--:--</div>
+      <div id="status-pill" style="color: {pill_color};">{pill_text}</div>
+    </div>
   </div>
   <div id="viewport">
     {panes_html}
@@ -969,13 +1114,16 @@ def make_handler(state: ProxyState):
                 return
 
             if parsed.path == "/__5s__/status":
+                wifi = state.get_wifi_info(allow_subprocess=True)
                 payload = json.dumps(
                     {
                         "online": state.online,
                         "cached_items": state.cached_count(),
                         "last_sync": state.last_sync,
                         "wifi_configured": state.is_wifi_configured(),
-                        "ssid": state.ssid,
+                        "ssid": wifi["ssid"],
+                        "signal_percent": wifi["signal_percent"],
+                        "signal_dbm": wifi["signal_dbm"],
                         "ip": state.ip,
                         "gw": state.gw,
                         "internet_ok": state.internet_ok,

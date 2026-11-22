@@ -183,6 +183,10 @@ def main() -> None:
                 assert app_ms < max_hit_ms, f"/app took {app_ms:.2f}ms (>= {max_hit_ms}ms)"
                 assert "vp0?9|av01" in app_body
                 assert '"F1"' in app_body and '"F2"' in app_body
+                assert 'id="wifi-status"' in app_body
+                assert 'id="topbar-clock"' in app_body
+                assert 'id="status-pill"' in app_body
+                assert "TestNet" in app_body
 
             # Assert cached proxy hits < max_hit_ms
             for u, expected in ((gmail_url, "Email #1"), (yt_url, "Video #1")):
@@ -205,7 +209,8 @@ def main() -> None:
             try:
                 net_req = urllib.request.Request(
                     f"http://127.0.0.1:{proxy_port}/__5s__/net-online",
-                    data=b"{}",
+                    data=json.dumps({"online": True, "ssid": "TestNet", "signal_percent": 76, "signal_dbm": -62}).encode(),
+                    headers={"Content-Type": "application/json"},
                     method="POST",
                 )
                 with urllib.request.urlopen(net_req) as resp:
@@ -225,6 +230,12 @@ def main() -> None:
                             break
                     time.sleep(0.05)
                 assert synced, "Background delta sync did not update cache after net-online"
+                assert status_data.get("ssid") == "TestNet"
+                assert status_data.get("signal_percent") == 76
+                assert status_data.get("signal_dbm") == -62
+                with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app") as resp:
+                    online_app = resp.read().decode("utf-8")
+                    assert "TestNet (76%)" in online_app
             finally:
                 upstream2.shutdown()
                 upstream2.server_close()

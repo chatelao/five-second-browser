@@ -82,13 +82,79 @@
     });
   } catch (_) {}
 
+  const right = document.createElement("div");
+  right.id = "fs-5s-right";
+  right.style.cssText = "display:flex;align-items:center;gap:12px;font-size:12px;";
+
+  const wifiEl = document.createElement("div");
+  wifiEl.id = "fs-5s-wifi";
+  wifiEl.textContent = "\uD83D\uDCF6 Wi-Fi";
+  wifiEl.style.cssText = "color:#94a3b8;white-space:nowrap;";
+
+  const clockEl = document.createElement("div");
+  clockEl.id = "fs-5s-clock";
+  clockEl.textContent = "--:--";
+  clockEl.title = "Local Time";
+  clockEl.style.cssText = "color:#e2e8f0;font-variant-numeric:tabular-nums;white-space:nowrap;";
+
   const pill = document.createElement("div");
   pill.id = "fs-5s-pill";
   pill.textContent = "\u25CF Live";
-  pill.style.cssText = "color:#4ade80;font-size:12px;";
+  pill.style.cssText = "color:#4ade80;font-size:12px;white-space:nowrap;";
+
+  right.appendChild(wifiEl);
+  right.appendChild(clockEl);
+  right.appendChild(pill);
 
   bar.appendChild(left);
-  bar.appendChild(pill);
+  bar.appendChild(right);
+
+  function updateClock() {
+    try {
+      clockEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (_) {
+      const d = new Date();
+      clockEl.textContent = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    }
+  }
+
+  function applyStatus(st) {
+    if (!st) return;
+    if (st.ssid && st.signal_percent !== null && st.signal_percent !== undefined) {
+      wifiEl.textContent = "\uD83D\uDCF6 " + st.ssid + " (" + st.signal_percent + "%)";
+      wifiEl.title = st.signal_dbm !== null && st.signal_dbm !== undefined
+        ? (st.ssid + " (" + st.signal_percent + "%, " + st.signal_dbm + " dBm)")
+        : (st.ssid + " (" + st.signal_percent + "%)");
+    } else if (st.ssid) {
+      wifiEl.textContent = "\uD83D\uDCF6 " + st.ssid;
+      wifiEl.title = st.ssid;
+    } else {
+      wifiEl.textContent = "\uD83D\uDCF6 No Wi-Fi";
+      wifiEl.title = "Wi-Fi Network & Signal";
+    }
+    if (st.online) {
+      pill.textContent = "\u25CF Live";
+      pill.style.color = "#4ade80";
+    } else {
+      pill.textContent = st.net_error ? ("\u25CF " + st.net_error) : "\u25CF Offline";
+      pill.style.color = "#f87171";
+    }
+  }
+
+  function refreshStatus() {
+    try {
+      chrome.runtime.sendMessage({ type: "get_status" }, function (resp) {
+        if (resp && resp.status) {
+          applyStatus(resp.status);
+        }
+      });
+    } catch (_) {}
+  }
+
+  updateClock();
+  setInterval(updateClock, 1000);
+  refreshStatus();
+  setInterval(refreshStatus, 3000);
 
   if (document.documentElement) {
     document.documentElement.style.paddingTop = "24px";

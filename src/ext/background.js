@@ -15,6 +15,13 @@ const tabIds = {
 
 let onlineNotified = false;
 let enabledFeatures = { gmail: true, youtube: true, disc: true };
+let latestStatus = {
+  online: true,
+  ssid: "",
+  signal_percent: null,
+  signal_dbm: null,
+  net_error: ""
+};
 
 function appLog(level, message, extra) {
   fetch(`${PROXY_BASE}/__5s__/app-log`, {
@@ -118,6 +125,10 @@ async function pollProxyOnline() {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "get_features") {
     sendResponse({ features: enabledFeatures });
+    return false;
+  }
+  if (msg && msg.type === "get_status") {
+    sendResponse({ status: latestStatus });
     return false;
   }
   if (msg && msg.type === "switch_tab" && msg.tab) {
