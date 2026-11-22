@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
 #include <net/if.h>
@@ -108,6 +109,23 @@ static void bring_up_loopback(void) {
     close(fd);
 }
 
+static void attach_tty1_console(void) {
+    int fd = open("/dev/tty1", O_RDWR | O_NOCTTY);
+    if (fd < 0) {
+        fd = open("/dev/console", O_RDWR | O_NOCTTY);
+    }
+    if (fd >= 0) {
+        (void)setsid();
+        (void)ioctl(fd, TIOCSCTTY, 1);
+        (void)dup2(fd, STDIN_FILENO);
+        (void)dup2(fd, STDOUT_FILENO);
+        (void)dup2(fd, STDERR_FILENO);
+        if (fd > STDERR_FILENO) {
+            close(fd);
+        }
+    }
+}
+
 static void setup_pid1_mounts(const char *bin_dir) {
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 0);
     mkdir("/proc", 0755);
@@ -123,6 +141,7 @@ static void setup_pid1_mounts(const char *bin_dir) {
     if (!is_submount("/dev/shm", "/dev")) (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
     if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
+    attach_tty1_console();
     bring_up_loopback();
 
     if (access("/lib/systemd/systemd-udevd", X_OK) == 0) {

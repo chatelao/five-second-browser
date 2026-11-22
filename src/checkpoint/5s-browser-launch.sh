@@ -67,8 +67,13 @@ fi
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_VTNR="${XDG_VTNR:-1}"
 export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-builtin}"
+export WLR_LIBINPUT_NO_DEVICES="${WLR_LIBINPUT_NO_DEVICES:-1}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
+
+if [[ ! -e /dev/dri/card0 ]] && command -v modprobe >/dev/null 2>&1; then
+  modprobe i915 >/dev/null 2>&1 || true
+fi
 
 for _ in $(seq 1 100); do
   if [[ -e /dev/dri/card0 ]]; then
@@ -77,4 +82,5 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 
+echo "5s-browser: starting Cage + Chromium on /dev/dri/card0 (proxy=${PROXY_URL}/app)..."
 exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

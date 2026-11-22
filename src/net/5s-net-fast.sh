@@ -130,6 +130,61 @@ notify_proxy_online() {
   return 0
 }
 
+import_external_wifi_config() {
+  local wifi_file=""
+  for cand in "$STATE_DIR/wifi.txt" /boot/efi/wifi.txt /boot/efi/WIFI.TXT; do
+    if [[ -f "$cand" ]]; then
+      wifi_file="$cand"
+      break
+    fi
+  done
+
+  if [[ "$MOCK_MODE" != "1" && -z "$wifi_file" ]] && [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
+    mkdir -p /boot/efi
+    mount /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
+      mount /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
+    for cand in /boot/efi/wifi.txt /boot/efi/WIFI.TXT; do
+      if [[ -f "$cand" ]]; then
+        wifi_file="$cand"
+        break
+      fi
+    done
+  fi
+
+  [[ -n "$wifi_file" && -f "$wifi_file" ]] || return 0
+
+  local ext_ssid=""
+  local ext_pass=""
+  while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    local line="${raw_line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" || "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ "$line" =~ ^SSID=(.*)$ ]]; then
+      ext_ssid="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^PASSWORD=(.*)$ || "$line" =~ ^PSK=(.*)$ || "$line" =~ ^PASS=(.*)$ ]]; then
+      ext_pass="${BASH_REMATCH[1]}"
+    elif [[ -z "$ext_ssid" ]]; then
+      ext_ssid="$line"
+    elif [[ -z "$ext_pass" ]]; then
+      ext_pass="$line"
+    fi
+  done < "$wifi_file"
+
+  [[ -n "$ext_ssid" ]] || return 0
+
+  echo "5s-net: importing Wi-Fi credentials for SSID '$ext_ssid' from $wifi_file"
+  local iwd_dir="${IWD_DIR:-/var/lib/iwd}"
+  mkdir -p "$iwd_dir"
+  local psk_path="$iwd_dir/${ext_ssid}.psk"
+  umask 0077
+  if [[ -n "$ext_pass" ]]; then
+    printf '[Security]\nPassphrase=%s\n\n[Settings]\nAutoConnect=true\n' "$ext_pass" > "$psk_path"
+  else
+    printf '[Settings]\nAutoConnect=true\n' > "$psk_path"
+  fi
+  printf '%s\n' "$ext_ssid" > "$STATE_DIR/wifi_configured"
+  CACHED_SSID="$ext_ssid"
+}
+
 do_boot() {
   merge_hosts_cache
 
@@ -138,7 +193,17 @@ do_boot() {
     source "$NET_DIR/last_lease.env"
   fi
 
+  import_external_wifi_config
+
   if [[ "$MOCK_MODE" != "1" ]]; then
+    if command -v rfkill >/dev/null 2>&1; then
+      rfkill unblock wifi >/dev/null 2>&1 || true
+    fi
+    if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
+      mkdir -p /var/lib/iwd
+      /usr/libexec/iwd >/dev/null 2>&1 &
+      sleep 0.2
+    fi
     ip link set "$WLAN_IF" up 2>/dev/null || true
     if [[ -n "${CACHED_IP:-}" ]]; then
       ip addr replace "$CACHED_IP" dev "$WLAN_IF" 2>/dev/null || true
@@ -174,6 +239,11 @@ do_connect() {
     exit 2
   fi
   if [[ "$MOCK_MODE" != "1" ]]; then
+    if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
+      mkdir -p /var/lib/iwd
+      /usr/libexec/iwd >/dev/null 2>&1 &
+      sleep 0.2
+    fi
     ip link set "$WLAN_IF" up 2>/dev/null || true
     if command -v iwctl >/dev/null 2>&1; then
       iwctl station "$WLAN_IF" connect "$CONNECT_SSID" || true

@@ -116,8 +116,9 @@ if ! grep -q "root=LABEL=5s-usb-root" "$MNT_DIR/boot/grub/grub.cfg"; then
   exit 1
 fi
 
-# Enable serial console logging ONLY on the temporary test image copy
+# Enable serial console logging and software renderer fallback ONLY on the temporary test image copy
 sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
+sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER_ALLOW_SOFTWARE=1' "$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
 sync
 
 umount "$MNT_DIR/boot/efi"
@@ -154,13 +155,14 @@ QEMU_PID=$!
 DEADLINE=$((SECONDS + 90))
 BOOTED_KERNEL=0
 RAN_ZRAM_INIT=0
+STARTED_BROWSER=0
 
 while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     break
   fi
-  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set" "$SERIAL_LOG" 2>/dev/null; then
-    echo "ERROR: Fatal kernel/PID 1 failure detected during USB UEFI boot:" >&2
+  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)" "$SERIAL_LOG" 2>/dev/null; then
+    echo "ERROR: Fatal kernel/PID 1/browser failure detected during USB UEFI boot:" >&2
     tail -n 60 "$SERIAL_LOG" >&2 || true
     exit 1
   fi
@@ -169,9 +171,12 @@ while (( SECONDS < DEADLINE )); do
   fi
   if grep -qE "zram0: (detected capacity change|configured)|Adding .* swap on /dev/zram0" "$SERIAL_LOG" 2>/dev/null; then
     RAN_ZRAM_INIT=1
-    sleep 3
-    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set" "$SERIAL_LOG" 2>/dev/null; then
-      echo "ERROR: Fatal kernel/PID 1 failure detected after init:" >&2
+  fi
+  if grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
+    STARTED_BROWSER=1
+    sleep 4
+    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend" "$SERIAL_LOG" 2>/dev/null; then
+      echo "ERROR: Fatal browser/wlroots failure detected after launch:" >&2
       tail -n 60 "$SERIAL_LOG" >&2 || true
       exit 1
     fi
@@ -184,8 +189,8 @@ kill "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
 QEMU_PID=""
 
-if [[ "$BOOTED_KERNEL" != "1" || "$RAN_ZRAM_INIT" != "1" ]]; then
-  echo "ERROR: USB 3.0 UEFI boot verification timed out (BOOTED_KERNEL=$BOOTED_KERNEL RAN_ZRAM_INIT=$RAN_ZRAM_INIT)" >&2
+if [[ "$BOOTED_KERNEL" != "1" || "$RAN_ZRAM_INIT" != "1" || "$STARTED_BROWSER" != "1" ]]; then
+  echo "ERROR: USB 3.0 UEFI boot verification timed out (BOOTED_KERNEL=$BOOTED_KERNEL RAN_ZRAM_INIT=$RAN_ZRAM_INIT STARTED_BROWSER=$STARTED_BROWSER)" >&2
   tail -n 80 "$SERIAL_LOG" >&2 || true
   exit 1
 fi

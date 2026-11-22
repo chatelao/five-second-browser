@@ -94,6 +94,13 @@ fi
 mkdir -p "$MNT_DIR/boot/efi"
 mount "$EFI_PART" "$MNT_DIR/boot/efi"
 
+cat > "$MNT_DIR/boot/efi/wifi.txt" <<'EOF'
+# 5s-browser External Wi-Fi Configuration (FAT32 partition: 5S-USB-EFI)
+# Uncomment and fill in SSID and PASSWORD below (or put SSID on line 1 and PASSWORD on line 2):
+#SSID=YourWiFiName
+#PASSWORD=YourWiFiPassword
+EOF
+
 echo "5s-browser" > "$MNT_DIR/etc/hostname"
 
 cat > "$MNT_DIR/etc/fstab" <<'EOF'
@@ -108,7 +115,7 @@ GRUB_DEFAULT=0
 GRUB_TIMEOUT=2
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait loglevel=7 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,snd_hda_intel init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait loglevel=7 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
 EOF
 
 chroot "$MNT_DIR" grub-install --target=i386-pc --recheck "$LOOP_DEV"
@@ -126,8 +133,8 @@ if [[ -f "$MNT_DIR/usr/share/initramfs-tools/scripts/init-top/udev" ]]; then
   chmod +x "$MNT_DIR/etc/initramfs-tools/scripts/init-top/udev"
 fi
 
-# Ensure initramfs includes USB 3.0 (xHCI) & Realtek PCIe SD card reader modules
-for mod in xhci_pci xhci_hcd usb_storage uas rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci; do
+# Ensure initramfs includes Intel Gen8 KMS (i915), USB 3.0 (xHCI) & Realtek PCIe SD card reader modules
+for mod in i915 xhci_pci xhci_hcd usb_storage uas rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci; do
   if ! grep -qx "$mod" "$MNT_DIR/etc/initramfs-tools/modules" 2>/dev/null; then
     echo "$mod" >> "$MNT_DIR/etc/initramfs-tools/modules"
   fi

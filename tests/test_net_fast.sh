@@ -60,4 +60,16 @@ if ! echo "$status_json" | grep -q '"online": true'; then
   exit 1
 fi
 
-echo "test_net_fast: shutdown cache + boot preload + proxy online transition in ${elapsed}ms"
+cat > "$TMP_DIR/wifi.txt" <<'EOF'
+SSID=ExternalHome5G
+PASSWORD=SuperSecret123!
+EOF
+
+IWD_DIR="$TMP_DIR/iwd" MOCK_MODE=1 PROXY_URL="http://127.0.0.1:${PORT}" \
+  "$NET_SCRIPT" --boot --state-dir "$TMP_DIR"
+
+[[ -f "$TMP_DIR/iwd/ExternalHome5G.psk" ]] || { echo "ERROR: ExternalHome5G.psk not created from wifi.txt"; exit 1; }
+grep -q "Passphrase=SuperSecret123!" "$TMP_DIR/iwd/ExternalHome5G.psk" || { echo "ERROR: Passphrase missing in .psk"; exit 1; }
+grep -qx "ExternalHome5G" "$TMP_DIR/wifi_configured" || { echo "ERROR: wifi_configured not updated from wifi.txt"; exit 1; }
+
+echo "test_net_fast: shutdown cache + boot preload + wifi.txt import + proxy online transition in ${elapsed}ms"
