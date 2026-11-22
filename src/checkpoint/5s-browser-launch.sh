@@ -71,14 +71,62 @@ if [[ "$(id -u)" -eq 0 ]]; then
   CHROMIUM_FLAGS+=("--no-sandbox" "--test-type")
 fi
 
-export HOME="${HOME:-/root}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export XDG_VTNR="${XDG_VTNR:-1}"
-export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-builtin}"
 export WLR_LIBINPUT_NO_DEVICES="${WLR_LIBINPUT_NO_DEVICES:-1}"
 export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
-chmod 0700 "$XDG_RUNTIME_DIR"
+
+RUN_USER=""
+RUN_UID=""
+RUN_GID=""
+SEATD_PID=""
+DEFAULT_LIBSEAT_BACKEND="builtin"
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  if id -u kiosk >/dev/null 2>&1; then
+    RUN_USER="kiosk"
+  elif id -u nobody >/dev/null 2>&1; then
+    RUN_USER="nobody"
+  fi
+
+  if [[ -n "$RUN_USER" ]]; then
+    RUN_UID="$(id -u "$RUN_USER")"
+    RUN_GID="$(id -g "$RUN_USER")"
+    HOME_DIR="$(getent passwd "$RUN_USER" | cut -d: -f6 || true)"
+    export HOME="${HOME_DIR:-/home/$RUN_USER}"
+    export XDG_RUNTIME_DIR="/run/user/${RUN_UID}"
+    mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
+    chown "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR" "$HOME"
+    chmod 0700 "$XDG_RUNTIME_DIR"
+    chown -R "${RUN_UID}:${RUN_GID}" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
+  else
+    export HOME="${HOME:-/root}"
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+    mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
+    chmod 0700 "$XDG_RUNTIME_DIR"
+  fi
+
+  if command -v seatd >/dev/null 2>&1; then
+    rm -f /run/seatd.sock
+    SEATD_GROUP="video"
+    if [[ "$RUN_USER" == "nobody" ]] || ! getent group video >/dev/null 2>&1; then
+      SEATD_GROUP="$(id -gn "${RUN_USER:-root}")"
+    fi
+    seatd -g "$SEATD_GROUP" >"$STATE_DIR/seatd.log" 2>&1 &
+    SEATD_PID=$!
+    for _ in $(seq 1 100); do
+      [[ -S /run/seatd.sock ]] && break
+      sleep 0.02
+    done
+    DEFAULT_LIBSEAT_BACKEND="seatd"
+  fi
+else
+  export HOME="${HOME:-/tmp}"
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
+  chmod 0700 "$XDG_RUNTIME_DIR"
+fi
+
+export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-$DEFAULT_LIBSEAT_BACKEND}"
 
 if [[ ! -e /dev/dri/card0 && ! -e /dev/dri/card1 ]] && command -v modprobe >/dev/null 2>&1; then
   log_msg "5s-browser: running modprobe i915..."
@@ -110,6 +158,10 @@ dump_debug_log() {
     ps -eo pid,ppid,stat,comm,args 2>&1 || ps 2>&1 || true
     echo "--- cage.log (last 120 lines) ---"
     tail -n 120 "$STATE_DIR/cage.log" 2>&1 || echo "(no cage.log)"
+    if [[ -f "$STATE_DIR/seatd.log" ]]; then
+      echo "--- seatd.log (last 40 lines) ---"
+      tail -n 40 "$STATE_DIR/seatd.log" 2>&1 || true
+    fi
     echo "--- dmesg (last 80 lines) ---"
     dmesg 2>/dev/null | tail -n 80 || true
   } > "$local_log" 2>&1 || true
@@ -126,10 +178,15 @@ dump_debug_log() {
 
 DRI_NODES="$(compgen -G '/dev/dri/card*' | tr '\n' ' ' || true)"
 FB_NODES="$(compgen -G '/dev/fb*' | tr '\n' ' ' || true)"
-log_msg "5s-browser: starting Cage + Chromium (dri=[${DRI_NODES:-none}] fb=[${FB_NODES:-none}] proxy=${PROXY_URL}/app)..."
+log_msg "5s-browser: starting Cage + Chromium (user=${RUN_USER:-$(id -un)} backend=${LIBSEAT_BACKEND} dri=[${DRI_NODES:-none}] fb=[${FB_NODES:-none}] proxy=${PROXY_URL}/app)..."
 
 set +e
-/usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
+  setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
+    /usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+else
+  /usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+fi
 CAGE_PID=$!
 
 (
@@ -151,6 +208,10 @@ wait "$CAGE_PID"
 RC=$?
 kill "$WATCHDOG_PID" 2>/dev/null || true
 wait "$WATCHDOG_PID" 2>/dev/null || true
+if [[ -n "$SEATD_PID" ]]; then
+  kill "$SEATD_PID" 2>/dev/null || true
+  wait "$SEATD_PID" 2>/dev/null || true
+fi
 set -e
 
 dump_debug_log "exit-${RC}"

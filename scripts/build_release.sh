@@ -29,7 +29,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: five-second-browser <maintainers@example.com>
 Depends: python3, lz4, curl
-Recommends: cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo
+Recommends: seatd, cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo
 Description: Five-second dual-tab Gmail & YouTube appliance for HP Pavilion 17-g111nz
  Boots directly into cached Gmail and YouTube on Intel Pentium 3825U (Broadwell-U,
  4GB RAM, Gen8 VA-API, Intel Wireless-AC 3165) while syncing live deltas.
@@ -40,6 +40,12 @@ cat > "$DEB_ROOT/DEBIAN/postinst" <<'EOF'
 set -euo pipefail
 mkdir -p /var/cache/5s/net
 chmod 0755 /opt/5s-browser/bin/*
+if ! id -u kiosk >/dev/null 2>&1 && command -v useradd >/dev/null 2>&1; then
+  useradd -r -m -d /home/kiosk -s /bin/sh kiosk || true
+  for grp in video render input audio tty; do
+    getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" kiosk || true
+  done
+fi
 EOF
 chmod 0755 "$DEB_ROOT/DEBIAN/postinst"
 

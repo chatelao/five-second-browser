@@ -48,14 +48,23 @@ cleanup_mounts() {
 }
 trap cleanup_mounts EXIT
 
-echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, cage, chromium, and 5s-browser..."
+echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, seatd, cage, chromium, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base cage chromium
+  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd cage chromium
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
 chroot "$ROOTFS" apt-get clean
+
+if ! chroot "$ROOTFS" id -u kiosk >/dev/null 2>&1; then
+  chroot "$ROOTFS" useradd -r -m -d /home/kiosk -s /bin/sh kiosk
+fi
+chroot "$ROOTFS" bash -c '
+  for grp in video render input audio tty; do
+    getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" kiosk || true
+  done
+'
 
 echo "5s-browser" > "$ROOTFS/etc/hostname"
 

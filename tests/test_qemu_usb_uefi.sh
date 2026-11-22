@@ -179,11 +179,13 @@ RAN_ZRAM_INIT=0
 STARTED_BROWSER=0
 VERIFIED_BROWSER=0
 
+FATAL_RE="Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unable to drop root|Unknown symbol in module"
+
 while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     break
   fi
-  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unknown symbol in module" "$SERIAL_LOG" 2>/dev/null; then
+  if grep -qE "$FATAL_RE" "$SERIAL_LOG" 2>/dev/null; then
     echo "ERROR: Fatal kernel/PID 1/browser/module failure detected during USB UEFI boot:" >&2
     tail -n 60 "$SERIAL_LOG" >&2 || true
     exit 1
@@ -197,7 +199,7 @@ while (( SECONDS < DEADLINE )); do
   if [[ "$VERIFIED_BROWSER" == "0" ]] && grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
     STARTED_BROWSER=1
     sleep 4
-    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unknown symbol in module" "$SERIAL_LOG" 2>/dev/null; then
+    if grep -qE "$FATAL_RE" "$SERIAL_LOG" 2>/dev/null; then
       echo "ERROR: Fatal browser/wlroots/module failure detected after launch:" >&2
       tail -n 60 "$SERIAL_LOG" >&2 || true
       exit 1
