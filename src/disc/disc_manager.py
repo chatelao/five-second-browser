@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Optical drive capability probing and mpv DVD/Blu-ray playback manager."""
 
+import ctypes.util
 import json
 import os
 import pwd
@@ -88,7 +89,27 @@ def classify_drive_and_media(
     }
 
 
-def map_mpv_error(stderr_text: str, disc_type: str) -> str:
+def detect_libdvdcss(extra_paths: Optional[list[str]] = None) -> bool:
+    candidates = [
+        "/usr/lib/x86_64-linux-gnu/libdvdcss.so.2",
+        "/usr/lib/libdvdcss.so.2",
+        "/usr/local/lib/libdvdcss.so.2",
+        "/lib/x86_64-linux-gnu/libdvdcss.so.2",
+    ]
+    if extra_paths:
+        candidates.extend(extra_paths)
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return True
+    try:
+        if ctypes.util.find_library("dvdcss"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def map_mpv_error(stderr_text: str, disc_type: str, libdvdcss_present: Optional[bool] = None) -> str:
     lower = stderr_text.lower()
     if "aacs" in lower or "keydb" in lower or "vuk" in lower:
         return (
@@ -97,12 +118,27 @@ def map_mpv_error(stderr_text: str, disc_type: str) -> str:
         )
     if "bdplus" in lower or "bd+" in lower:
         return "This Blu-ray uses BD+ protection that could not be decoded."
-    if "dvdnav" in lower or "dvdread" in lower or "css" in lower or "encrypted" in lower:
+    if (
+        "encrypted dvd support unavailable" in lower
+        or "error getting next block from dvd" in lower
+        or "error reading from dvd" in lower
+        or "dvdnav" in lower
+        or "dvdread" in lower
+        or "css" in lower
+        or "encrypted" in lower
+        or (
+            disc_type == "dvd"
+            and libdvdcss_present is False
+            and ("failed to recognize file format" in lower or "av_find_stream_info" in lower)
+        )
+    ):
         return (
             "Failed to open DVD. Commercial encrypted DVDs require libdvdcss2 "
-            "(build with ENABLE_LIBDVDCSS=1)."
+            "(build with ENABLE_LIBDVDCSS=1 or place libdvdcss.so.2 on 5S-USB-EFI)."
         )
-    if "no such file" in lower or "cannot open" in lower:
+    if "error opening/initializing the selected video_out" in lower or "vo/gpu" in lower:
+        return "Failed to initialize video output for disc playback (check /diag mpv.log)."
+    if "no such file" in lower or "cannot open" in lower or "permission denied" in lower:
         return f"Could not read {disc_type.upper()} from optical drive."
     tail = [ln.strip() for ln in stderr_text.splitlines() if ln.strip()]
     if tail:
@@ -127,6 +163,7 @@ class DiscManager:
         self.playing_type: Optional[str] = None
         self.last_error: Optional[str] = None
         self.ipc_sock = os.path.join(self.state_dir, "5s-mpv.sock")
+        self.mpv_log_path = os.path.join(self.state_dir, "logs", "mpv.log")
         self._monitor_stop = threading.Event()
         self._monitor_thread: Optional[threading.Thread] = None
         self._on_change: Optional[Callable[[dict], None]] = None
@@ -156,6 +193,22 @@ class DiscManager:
                 os.chown(dest_keydb, uid, gid)
             return True
         return os.path.isfile(dest_keydb)
+
+    def _libdvdcss_paths(self) -> tuple[str, str]:
+        efi_lib = os.environ.get("EFI_LIBDVDCSS_PATH", "/boot/efi/libdvdcss.so.2")
+        dest_lib = os.path.join(self.state_dir, "lib", "libdvdcss.so.2")
+        return efi_lib, dest_lib
+
+    def sync_libdvdcss(self) -> Optional[str]:
+        efi_lib, dest_lib = self._libdvdcss_paths()
+        if os.path.isfile(efi_lib):
+            os.makedirs(os.path.dirname(dest_lib), exist_ok=True)
+            shutil.copy2(efi_lib, dest_lib)
+            os.chmod(dest_lib, 0o644)
+            return os.path.dirname(dest_lib)
+        if os.path.isfile(dest_lib):
+            return os.path.dirname(dest_lib)
+        return None
 
     def _read_sys_model(self) -> str:
         dev_name = os.path.basename(self.device)
@@ -263,6 +316,8 @@ class DiscManager:
                 )
 
         _, dest_keydb = self._aacs_keydb_paths()
+        efi_css, dest_css = self._libdvdcss_paths()
+        libdvdcss_present = detect_libdvdcss([efi_css, dest_css])
         with self.lock:
             playing = self.mpv_proc is not None and self.mpv_proc.poll() is None
             if not playing:
@@ -274,6 +329,7 @@ class DiscManager:
                     "playing_type": self.playing_type if playing else None,
                     "last_error": self.last_error,
                     "aacs_keydb_present": os.path.isfile(dest_keydb),
+                    "libdvdcss_present": libdvdcss_present,
                 }
             )
         return info
@@ -319,8 +375,14 @@ class DiscManager:
 
         self.stop()
 
+        css_lib_dir: Optional[str] = None
         if target == "bluray":
             self.sync_keydb()
+        else:
+            css_lib_dir = self.sync_libdvdcss()
+
+        efi_css, dest_css = self._libdvdcss_paths()
+        libdvdcss_present = detect_libdvdcss([efi_css, dest_css])
 
         with self.lock:
             self.last_error = None
@@ -342,6 +404,10 @@ class DiscManager:
             return False, "mpv player is not installed"
 
         env = self._discover_wayland_env()
+        if css_lib_dir:
+            prev_ld = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = f"{css_lib_dir}:{prev_ld}" if prev_ld else css_lib_dir
+
         uid, gid, _ = self._kiosk_user_info()
         if os.geteuid() == 0 and uid is not None:
             self.ipc_sock = f"/run/user/{uid}/5s-mpv.sock"
@@ -357,11 +423,13 @@ class DiscManager:
         if vo_override == "drm" or not env.get("WAYLAND_DISPLAY"):
             vo_flags = ["--vo=drm", "--hwdec=no"]
         else:
-            vo_flags = ["--vo=gpu", "--hwdec=vaapi", "--gpu-context=wayland"]
+            vo_flags = ["--vo=gpu,wlshm", "--hwdec=auto-safe", "--gpu-context=wayland"]
 
         mpv_cmd = [
             "mpv",
             "--fs",
+            "--no-resume-playback",
+            "--ao=alsa",
             *vo_flags,
             f"--input-ipc-server={self.ipc_sock}",
             "--keep-open=no",
@@ -369,7 +437,7 @@ class DiscManager:
         if target == "bluray":
             mpv_cmd.extend([f"--bluray-device={self.device}", "bd://"])
         else:
-            mpv_cmd.extend([f"--dvd-device={self.device}", "dvdnav://"])
+            mpv_cmd.extend([f"--dvd-device={self.device}", "dvd://"])
 
         if os.geteuid() == 0 and uid is not None and gid is not None and shutil.which("setpriv"):
             cmd = [
@@ -382,12 +450,26 @@ class DiscManager:
         else:
             cmd = mpv_cmd
 
+        os.makedirs(os.path.dirname(self.mpv_log_path), exist_ok=True)
+        try:
+            with open(self.mpv_log_path, "a", encoding="utf-8") as lf:
+                ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                lf.write(
+                    f"\n=== [{ts}] start {target} (libdvdcss={libdvdcss_present}, "
+                    f"WAYLAND_DISPLAY={env.get('WAYLAND_DISPLAY', '')}, "
+                    f"XDG_RUNTIME_DIR={env.get('XDG_RUNTIME_DIR', '')}) ===\n"
+                )
+                lf.write(f"cmd: {' '.join(cmd)}\n")
+        except OSError:
+            pass
+
         proc = subprocess.Popen(
             cmd,
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
 
         with self.lock:
@@ -395,14 +477,56 @@ class DiscManager:
             self.playing_type = target
 
         def _wait_mpv():
-            _, stderr_data = proc.communicate()
-            rc = proc.returncode
+            lines: list[str] = []
+            css_missing_seen = False
+            dvd_read_errors = 0
+            aborted_css_loop = False
+            try:
+                with open(self.mpv_log_path, "a", encoding="utf-8") as lf:
+                    if proc.stdout is not None:
+                        for raw_line in proc.stdout:
+                            lf.write(raw_line)
+                            lf.flush()
+                            clean = raw_line.rstrip()
+                            if clean:
+                                lines.append(clean)
+                                if len(lines) > 200:
+                                    lines.pop(0)
+                                low = clean.lower()
+                                if "encrypted dvd support unavailable" in low:
+                                    css_missing_seen = True
+                                if "error getting next block from dvd" in low or "error reading from dvd" in low:
+                                    dvd_read_errors += 1
+                                if (
+                                    target == "dvd"
+                                    and not libdvdcss_present
+                                    and (css_missing_seen or dvd_read_errors >= 5)
+                                    and dvd_read_errors >= 5
+                                ):
+                                    aborted_css_loop = True
+                                    lf.write("[5s-disc] Aborting mpv: repeated DVD read errors without libdvdcss2\n")
+                                    lf.flush()
+                                    proc.terminate()
+                                    break
+            except OSError:
+                pass
+
+            rc = proc.wait()
+            try:
+                with open(self.mpv_log_path, "a", encoding="utf-8") as lf:
+                    lf.write(f"=== mpv exited rc={rc} ===\n")
+            except OSError:
+                pass
+
+            output_text = "\n".join(lines)
             with self.lock:
                 if self.mpv_proc is proc:
                     self.mpv_proc = None
                     self.playing_type = None
-                    if rc not in (0, -15, -9, None):
-                        self.last_error = map_mpv_error(stderr_data or "", target)
+                    if aborted_css_loop or rc not in (0, -15, -9, None):
+                        self.last_error = map_mpv_error(
+                            output_text, target, libdvdcss_present=libdvdcss_present
+                        )
             self._notify_change()
 
         threading.Thread(target=_wait_mpv, daemon=True).start()

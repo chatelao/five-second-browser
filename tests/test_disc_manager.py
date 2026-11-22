@@ -53,18 +53,28 @@ def test_udev_parsing_and_capabilities() -> None:
 def test_error_mapping() -> None:
     assert "KEYDB.cfg" in map_mpv_error("libaacs: Error decrypting AACS", "bluray")
     assert "libdvdcss2" in map_mpv_error("dvdread: Encrypted DVD CSS failed", "dvd")
+    assert "libdvdcss2" in map_mpv_error("libdvdread: Encrypted DVD support unavailable.", "dvd")
+    assert "libdvdcss2" in map_mpv_error("[dvdnav] Error getting next block from DVD 1", "dvd")
+    assert "libdvdcss2" in map_mpv_error("Failed to recognize file format.", "dvd", libdvdcss_present=False)
+    assert "video output" in map_mpv_error("Error opening/initializing the selected video_out (-vo) device.", "dvd")
 
 
 def test_mock_lifecycle_and_keydb() -> None:
     tmp_dir = tempfile.mkdtemp()
     old_home = os.environ.get("HOME")
     old_efi = os.environ.get("EFI_KEYDB_PATH")
+    old_css = os.environ.get("EFI_LIBDVDCSS_PATH")
     try:
         os.environ["HOME"] = tmp_dir
         efi_keydb = os.path.join(tmp_dir, "KEYDB.cfg")
         with open(efi_keydb, "w", encoding="utf-8") as f:
             f.write("; mock aacs keys\n")
         os.environ["EFI_KEYDB_PATH"] = efi_keydb
+
+        efi_css = os.path.join(tmp_dir, "libdvdcss.so.2")
+        with open(efi_css, "wb") as f:
+            f.write(b"mock-elf")
+        os.environ["EFI_LIBDVDCSS_PATH"] = efi_css
 
         mock_file = os.path.join(tmp_dir, "mock_disc.json")
         # 1. DVD-only drive with Blu-ray disc inserted -> Blu-ray play rejected
@@ -76,7 +86,13 @@ def test_mock_lifecycle_and_keydb() -> None:
         assert st["drive_present"] is True
         assert st["supports_dvd"] is True
         assert st["supports_bluray"] is False
+        assert st["media_type"] == "dvd" or st["media_type"] == "bluray"
         assert st["media_type"] == "bluray"
+        assert st["libdvdcss_present"] is True
+
+        css_dir = mgr.sync_libdvdcss()
+        assert css_dir == os.path.join(tmp_dir, "lib")
+        assert os.path.isfile(os.path.join(tmp_dir, "lib", "libdvdcss.so.2"))
 
         ok, msg = mgr.play("bluray")
         assert ok is False and "DVD-only" in msg
@@ -108,6 +124,10 @@ def test_mock_lifecycle_and_keydb() -> None:
             os.environ["EFI_KEYDB_PATH"] = old_efi
         else:
             os.environ.pop("EFI_KEYDB_PATH", None)
+        if old_css is not None:
+            os.environ["EFI_LIBDVDCSS_PATH"] = old_css
+        else:
+            os.environ.pop("EFI_LIBDVDCSS_PATH", None)
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

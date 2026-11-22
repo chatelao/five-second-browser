@@ -81,8 +81,16 @@ EOF
     firmware-iwlwifi intel-microcode wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
     mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
   if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
-    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
-    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg || true
+    chroot "$STAGE_ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/first-install note" | debconf-set-selections'
+    chroot "$STAGE_ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/build boolean true" | debconf-set-selections'
+    chroot "$STAGE_ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/post-invoke_hook-install boolean false" | debconf-set-selections'
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg
+    chroot "$STAGE_ROOTFS" apt-mark manual libdvdcss2
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get purge -y libdvd-pkg
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get autoremove -y --purge
+    rm -rf "$STAGE_ROOTFS/usr/src/libdvd-pkg"
+    test -f "$STAGE_ROOTFS/usr/lib/x86_64-linux-gnu/libdvdcss.so.2"
   fi
   cp "$DEB_FILE" "$STAGE_ROOTFS/tmp/5s-browser.deb"
   chroot "$STAGE_ROOTFS" dpkg -i /tmp/5s-browser.deb

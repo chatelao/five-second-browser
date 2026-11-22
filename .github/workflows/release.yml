@@ -56,7 +56,7 @@ jobs:
           fi
           export VERSION="$REL_VERSION"
           shellcheck scripts/*.sh src/*/*.sh tests/*.sh
-          python3 -m py_compile src/proxy/cache_proxy.py tests/test_cache_proxy.py
+          python3 -m py_compile src/disc/disc_manager.py src/proxy/cache_proxy.py tests/test_disc_manager.py tests/test_cache_proxy.py
           make build
           make check-isa
           make test
@@ -64,9 +64,9 @@ jobs:
           bash tests/test_release_bundle.sh
           REQUIRE_QEMU=1 bash tests/test_qemu_boot.sh
           mkdir -p ~/.cache/debootstrap
-          sudo VERSION="$REL_VERSION" DEBOOTSTRAP_CACHE_DIR="$HOME/.cache/debootstrap" bash scripts/build_iso.sh
+          sudo VERSION="$REL_VERSION" ENABLE_LIBDVDCSS=1 DEBOOTSTRAP_CACHE_DIR="$HOME/.cache/debootstrap" bash scripts/build_iso.sh
           sudo chown -R "$(id -u):$(id -g)" ~/.cache/debootstrap
-          sudo VERSION="$REL_VERSION" BASE_ROOTFS="$PWD/build/iso_work/rootfs" bash scripts/build_usb_img.sh
+          sudo VERSION="$REL_VERSION" ENABLE_LIBDVDCSS=1 BASE_ROOTFS="$PWD/build/iso_work/rootfs" bash scripts/build_usb_img.sh
           sudo REQUIRE_QEMU=1 bash tests/test_qemu_usb_uefi.sh
 
       - name: Publish GitHub Release

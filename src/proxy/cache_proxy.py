@@ -764,6 +764,7 @@ def collect_diagnostics(state: ProxyState) -> dict:
             "network_tail": _tail_file(os.path.join(state.logs_dir, "network.log")),
             "apps_tail": _tail_file(os.path.join(state.logs_dir, "apps.log")),
             "audio_tail": _tail_file(os.path.join(state.logs_dir, "audio.log")),
+            "mpv_tail": _tail_file(os.path.join(state.logs_dir, "mpv.log")),
             "init_tail": _tail_file(os.path.join(state.logs_dir, "init.log")),
             "proxy_tail": _tail_file(os.path.join(state.logs_dir, "proxy.log")),
             "timeline_tail": _tail_file(os.path.join(state.logs_dir, "boot-timeline.log")),
@@ -874,6 +875,7 @@ def render_diag_html() -> bytes:
           row("Drive Present", c.drive_present ? "Yes (" + (c.device || "/dev/sr0") + ")" : "No", c.drive_present ? "ok" : "warn"),
           row("Drive Model", c.model || "n/a"),
           row("Capabilities", "DVD=" + (c.supports_dvd ? "Yes" : "No") + ", Blu-ray=" + (c.supports_bluray ? "Yes" : "No")),
+          row("DVD CSS (libdvdcss2)", c.libdvdcss_present ? "Installed" : "Missing (unencrypted DVDs only)", c.libdvdcss_present ? "ok" : "warn"),
           row("Disc Inserted", c.disc_present ? "Yes (" + c.media_type + ")" : "No"),
           row("Disc Label", c.label || "n/a"),
           row("AACS KEYDB.cfg", c.aacs_keydb_present ? "Present" : "Not found"),
@@ -883,7 +885,13 @@ def render_diag_html() -> bytes:
 
         document.getElementById("log-net").textContent = (d.logs.network_tail || []).join("\\n") || "(empty)";
         document.getElementById("log-apps").textContent = (d.logs.apps_tail || []).join("\\n") || "(empty)";
-        const combined = [].concat(d.logs.init_tail || [], ["--- proxy.log ---"], d.logs.proxy_tail || []);
+        const combined = [].concat(
+          d.logs.init_tail || [],
+          ["--- proxy.log ---"],
+          d.logs.proxy_tail || [],
+          ["--- mpv.log ---"],
+          d.logs.mpv_tail || []
+        );
         document.getElementById("log-init").textContent = combined.join("\\n") || "(empty)";
       } catch (err) {
         document.getElementById("log-apps").textContent = "Failed to load diagnostics: " + err;
@@ -992,11 +1000,12 @@ def make_handler(state: ProxyState):
                     self.wfile.flush()
                     while True:
                         try:
-                            msg = q.get(timeout=1.0)
+                            msg = q.get(timeout=15.0)
                             self.wfile.write(msg)
                             self.wfile.flush()
                         except queue.Empty:
-                            break
+                            self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
                 except Exception:
                     pass
                 finally:

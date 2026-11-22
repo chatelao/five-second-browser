@@ -59,8 +59,16 @@ DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-
   firmware-iwlwifi intel-microcode wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
   mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
 if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
-  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
-  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg || true
+  chroot "$ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/first-install note" | debconf-set-selections'
+  chroot "$ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/build boolean true" | debconf-set-selections'
+  chroot "$ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/post-invoke_hook-install boolean false" | debconf-set-selections'
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg
+  chroot "$ROOTFS" apt-mark manual libdvdcss2
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get purge -y libdvd-pkg
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get autoremove -y --purge
+  rm -rf "$ROOTFS/usr/src/libdvd-pkg"
+  test -f "$ROOTFS/usr/lib/x86_64-linux-gnu/libdvdcss.so.2"
 fi
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb

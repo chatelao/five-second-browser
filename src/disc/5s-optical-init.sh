@@ -71,9 +71,9 @@ else
   usb_log "optical" "optical device not found yet: $OPTICAL_DEV"
 fi
 
-# Sync optional Blu-ray AACS KEYDB.cfg from FAT32 EFI partition if present
+# Sync optional Blu-ray AACS KEYDB.cfg and DVD libdvdcss.so.2 from FAT32 EFI partition if present
 EFI_MOUNTED_BY_US=0
-if [[ ! -f /boot/efi/KEYDB.cfg ]] && ! mountpoint -q /boot/efi 2>/dev/null && \
+if [[ ! -f /boot/efi/KEYDB.cfg && ! -f /boot/efi/libdvdcss.so.2 ]] && ! mountpoint -q /boot/efi 2>/dev/null && \
    [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
   mkdir -p /boot/efi
   if mount -o ro /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
@@ -94,6 +94,13 @@ if [[ -f /boot/efi/KEYDB.cfg ]]; then
     chown -R kiosk:kiosk "${KIOSK_HOME}/.config" 2>/dev/null || true
   fi
   usb_log "optical" "synced /boot/efi/KEYDB.cfg to ${KIOSK_HOME}/.config/aacs/KEYDB.cfg"
+fi
+
+if [[ -f /boot/efi/libdvdcss.so.2 ]]; then
+  mkdir -p "${STATE_DIR}/lib"
+  cp -f /boot/efi/libdvdcss.so.2 "${STATE_DIR}/lib/libdvdcss.so.2"
+  chmod 0644 "${STATE_DIR}/lib/libdvdcss.so.2"
+  usb_log "optical" "synced /boot/efi/libdvdcss.so.2 to ${STATE_DIR}/lib/libdvdcss.so.2"
 fi
 
 if [[ "$EFI_MOUNTED_BY_US" == "1" ]]; then

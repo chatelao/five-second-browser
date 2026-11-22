@@ -83,6 +83,9 @@
 
     const dvdCap = data.supports_dvd ? "DVD: Supported" : "DVD: Unsupported";
     const bdCap = data.supports_bluray ? "Blu-ray: Supported" : "Blu-ray: Not supported (DVD-only drive)";
+    const cssInfo = data.supports_dvd && data.libdvdcss_present === false
+      ? " | DVD CSS: Not installed"
+      : "";
     const keyInfo = data.supports_bluray
       ? (data.aacs_keydb_present ? " | AACS KEYDB.cfg: Ready" : " | AACS KEYDB.cfg: Not found")
       : "";
@@ -96,7 +99,7 @@
       if (tabBtn) tabBtn.textContent = "\uD83D\uDCBF Disc (F3)";
     }
 
-    capsEl.textContent = (data.model || "Built-in Drive") + " \u2014 " + dvdCap + " | " + bdCap + keyInfo;
+    capsEl.textContent = (data.model || "Built-in Drive") + " \u2014 " + dvdCap + cssInfo + " | " + bdCap + keyInfo;
 
     const playableType = data.media_type === "dvd" || data.media_type === "bluray";
     const typeSupported =
@@ -118,6 +121,23 @@
         msgEl.textContent = "";
       }
     }
+
+    if (data.playing) {
+      startDiscPoll();
+    } else {
+      stopDiscPoll();
+    }
+  }
+
+  let discPollTimer = null;
+  function startDiscPoll() {
+    if (discPollTimer) return;
+    discPollTimer = setInterval(refreshDiscStatus, 1500);
+  }
+  function stopDiscPoll() {
+    if (!discPollTimer) return;
+    clearInterval(discPollTimer);
+    discPollTimer = null;
   }
 
   function refreshDiscStatus() {
