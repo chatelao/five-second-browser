@@ -51,7 +51,7 @@ trap cleanup_mounts EXIT
 echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, seatd, xwayland, cage, chromium, mpv/disc libs, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium \
+  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
   mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
 if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
   DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true

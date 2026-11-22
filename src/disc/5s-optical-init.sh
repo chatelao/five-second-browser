@@ -26,10 +26,14 @@ if command -v udevadm >/dev/null 2>&1; then
 fi
 
 # Sync optional Blu-ray AACS KEYDB.cfg from FAT32 EFI partition if present
-if [[ ! -f /boot/efi/KEYDB.cfg ]] && [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
+EFI_MOUNTED_BY_US=0
+if [[ ! -f /boot/efi/KEYDB.cfg ]] && ! mountpoint -q /boot/efi 2>/dev/null && \
+   [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
   mkdir -p /boot/efi
-  mount -o ro /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
-    mount -o ro /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
+  if mount -o ro /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
+     mount -o ro /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null; then
+    EFI_MOUNTED_BY_US=1
+  fi
 fi
 
 if [[ -f /boot/efi/KEYDB.cfg ]]; then
@@ -43,6 +47,10 @@ if [[ -f /boot/efi/KEYDB.cfg ]]; then
   if id -u kiosk >/dev/null 2>&1; then
     chown -R kiosk:kiosk "${KIOSK_HOME}/.config" 2>/dev/null || true
   fi
+fi
+
+if [[ "$EFI_MOUNTED_BY_US" == "1" ]]; then
+  umount /boot/efi 2>/dev/null || true
 fi
 
 # Unmute ALSA playback channels so DVD/Blu-ray & browser audio work immediately

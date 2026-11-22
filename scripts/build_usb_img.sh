@@ -78,7 +78,7 @@ EOF
   echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, xwayland, cage, chromium, mpv/disc libs, and 5s-browser..."
   chroot "$STAGE_ROOTFS" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends \
-    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium \
+    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
     mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
   if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
@@ -223,7 +223,7 @@ for _ in $(seq 1 20); do
 done
 
 mkfs.vfat -F 32 -n 5S-USB-EFI "$EFI_PART"
-mkfs.ext4 -F -L 5s-usb-root "$ROOT_PART"
+mkfs.ext4 -F -E lazy_itable_init=0,lazy_journal_init=0 -L 5s-usb-root "$ROOT_PART"
 mount "$ROOT_PART" "$MNT_DIR"
 
 mkdir -p "$MNT_DIR/boot/efi" "$MNT_DIR/overlay/upper" "$MNT_DIR/overlay/work"

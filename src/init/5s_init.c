@@ -168,6 +168,18 @@ static void setup_pid1_mounts(void) {
         char *udevd_argv[] = {"/lib/systemd/systemd-udevd", "--daemon", NULL};
         (void)run_sync_cmd("/lib/systemd/systemd-udevd", udevd_argv);
     }
+
+    if (access("/usr/bin/dbus-daemon", X_OK) == 0 &&
+        access("/run/dbus/system_bus_socket", F_OK) != 0) {
+        mkdir("/run/dbus", 0755);
+        mkdir("/var/lib/dbus", 0755);
+        if (access("/usr/bin/dbus-uuidgen", X_OK) == 0) {
+            char *uuid_argv[] = {"/usr/bin/dbus-uuidgen", "--ensure", NULL};
+            (void)run_sync_cmd("/usr/bin/dbus-uuidgen", uuid_argv);
+        }
+        char *dbus_argv[] = {"/usr/bin/dbus-daemon", "--system", "--fork", "--nopidfile", NULL};
+        (void)run_sync_cmd("/usr/bin/dbus-daemon", dbus_argv);
+    }
 }
 
 static pid_t spawn_udev_trigger_async(void) {
@@ -370,6 +382,10 @@ int main(int argc, char **argv) {
 
     sync();
     if (getpid() == 1 && !test_mode) {
+        (void)umount("/boot/efi");
+        (void)mount(NULL, "/mnt/5s-backing", NULL, MS_REMOUNT | MS_RDONLY, NULL);
+        (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
+        sync();
         reboot(RB_POWER_OFF);
     }
     return 0;

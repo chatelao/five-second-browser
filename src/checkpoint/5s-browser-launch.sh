@@ -49,6 +49,7 @@ CHROMIUM_FLAGS=(
   "--no-first-run"
   "--no-default-browser-check"
   "--ozone-platform=wayland"
+  "--disable-vulkan"
   "--enable-features=UseOzonePlatform,VaapiVideoDecoder,VaapiVideoEncoder,CanvasOopRasterization"
   "--ignore-gpu-blocklist"
   "--enable-gpu-rasterization"
@@ -59,12 +60,15 @@ CHROMIUM_FLAGS=(
   "--v8-cache-options=code"
   "--disk-cache-dir=${STATE_DIR}/chromium_cache"
   "--user-data-dir=${STATE_DIR}/chromium_profile"
+  "--password-store=basic"
+  "--use-mock-keychain"
+  "--disable-notifications"
   "--disable-extensions"
   "--disable-component-update"
   "--disable-background-networking"
   "--disable-sync"
   "--disable-translate"
-  "--disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
+  "--disable-features=Vulkan,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
 )
 
 if [[ "$(id -u)" -eq 0 ]]; then
@@ -128,6 +132,7 @@ else
 fi
 
 export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-$DEFAULT_LIBSEAT_BACKEND}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
 
 if [[ ! -e /dev/dri/card0 && ! -e /dev/dri/card1 ]] && command -v modprobe >/dev/null 2>&1; then
   log_msg "5s-browser: running modprobe i915..."

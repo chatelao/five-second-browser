@@ -62,7 +62,11 @@ resolve_domain() {
     echo "142.250.185.10"
     return 0
   fi
-  getent ahostsv4 "$dom" 2>/dev/null | awk 'NR==1{print $1}' || true
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 1 getent ahostsv4 "$dom" 2>/dev/null | awk 'NR==1{print $1}' || true
+  else
+    getent ahostsv4 "$dom" 2>/dev/null | awk 'NR==1{print $1}' || true
+  fi
 }
 
 do_shutdown() {
@@ -185,6 +189,16 @@ import_external_wifi_config() {
   CACHED_SSID="$ext_ssid"
 }
 
+ensure_system_dbus() {
+  if [[ ! -S /run/dbus/system_bus_socket && -x /usr/bin/dbus-daemon ]]; then
+    mkdir -p /run/dbus /var/lib/dbus
+    if [[ -x /usr/bin/dbus-uuidgen ]]; then
+      /usr/bin/dbus-uuidgen --ensure 2>/dev/null || true
+    fi
+    /usr/bin/dbus-daemon --system --fork --nopidfile 2>/dev/null || true
+  fi
+}
+
 do_boot() {
   merge_hosts_cache
 
@@ -199,6 +213,7 @@ do_boot() {
     if command -v rfkill >/dev/null 2>&1; then
       rfkill unblock wifi >/dev/null 2>&1 || true
     fi
+    ensure_system_dbus
     if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
       mkdir -p /var/lib/iwd
       /usr/libexec/iwd >/dev/null 2>&1 &
@@ -239,6 +254,7 @@ do_connect() {
     exit 2
   fi
   if [[ "$MOCK_MODE" != "1" ]]; then
+    ensure_system_dbus
     if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
       mkdir -p /var/lib/iwd
       /usr/libexec/iwd >/dev/null 2>&1 &

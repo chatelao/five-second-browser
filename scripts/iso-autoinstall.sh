@@ -113,7 +113,7 @@ done
 
 echo "Formatting $EFI_PART (FAT32) and $ROOT_PART (ext4)..."
 mkfs.vfat -F 32 -n 5S-EFI "$EFI_PART"
-mkfs.ext4 -F -L 5s-root "$ROOT_PART"
+mkfs.ext4 -F -E lazy_itable_init=0,lazy_journal_init=0 -L 5s-root "$ROOT_PART"
 
 mkdir -p "$MOUNT_TARGET"
 mount "$ROOT_PART" "$MOUNT_TARGET"
