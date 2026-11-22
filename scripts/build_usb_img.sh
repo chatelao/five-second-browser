@@ -106,6 +106,14 @@ LABEL=5s-usb-root  /          ext4  defaults,noatime,commit=60  0  1
 LABEL=5S-USB-EFI   /boot/efi  vfat  umask=0077                  0  2
 EOF
 
+mkdir -p "$STAGE_ROOTFS/etc/iwd"
+cat > "$STAGE_ROOTFS/etc/iwd/main.conf" <<'EOF'
+[General]
+EnableNetworkConfiguration=true
+[Network]
+EnableIPv6=false
+EOF
+
 mkdir -p "$STAGE_ROOTFS/etc/default/grub.d"
 cat > "$STAGE_ROOTFS/etc/default/grub.d/5s-browser.cfg" <<'EOF'
 GRUB_DEFAULT=0
@@ -114,7 +122,7 @@ GRUB_TIMEOUT_STYLE=hidden
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
 GRUB_DISABLE_LINUX_UUID=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable,norst modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off intel_iommu=off initcall_blacklist=crb_acpi_driver_init usb-storage.delay_use=0 i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable,norst modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
 EOF
 
 mkdir -p "$STAGE_ROOTFS/etc/modprobe.d"
@@ -126,10 +134,26 @@ fi
 echo "3. Trimming rootfs & configuring SquashFS+OverlayFS initramfs..."
 trim_rootfs "$STAGE_ROOTFS"
 
+# Record initramfs entry timestamp into /run/5s-boot-marks for pre-init gap logging
+mkdir -p "$STAGE_ROOTFS/etc/initramfs-tools/scripts/init-top"
+cat > "$STAGE_ROOTFS/etc/initramfs-tools/scripts/init-top/00-5s-boot-mark" <<'EOF'
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in
+  prereqs) prereqs; exit 0 ;;
+esac
+mkdir -p /run
+if [ -r /proc/uptime ]; then
+  read -r up _ < /proc/uptime
+  echo "initramfs_top_uptime=${up}" >> /run/5s-boot-marks
+fi
+EOF
+chmod +x "$STAGE_ROOTFS/etc/initramfs-tools/scripts/init-top/00-5s-boot-mark"
+
 # Cap initramfs udevadm settle to 2s so a stalled non-boot device (e.g. optical/SATA/card reader)
 # cannot block USB root boot ("Timed out waiting for udev queue being empty")
 if [[ -f "$STAGE_ROOTFS/usr/share/initramfs-tools/scripts/init-top/udev" ]]; then
-  mkdir -p "$STAGE_ROOTFS/etc/initramfs-tools/scripts/init-top"
   cp "$STAGE_ROOTFS/usr/share/initramfs-tools/scripts/init-top/udev" \
      "$STAGE_ROOTFS/etc/initramfs-tools/scripts/init-top/udev"
   sed -i 's/udevadm settle/udevadm settle --timeout=2/g' \
@@ -154,6 +178,11 @@ prereqs() { echo "$PREREQ"; }
 case "${1:-}" in
   prereqs) prereqs; exit 0 ;;
 esac
+
+if [ -r /proc/uptime ]; then
+  read -r up _ < /proc/uptime
+  echo "initramfs_overlay_start_uptime=${up}" >> /run/5s-boot-marks
+fi
 
 [ -f "${rootmnt}/rootfs.squashfs" ] || exit 0
 
@@ -182,6 +211,11 @@ fi
 mkdir -p "${rootmnt}/boot" "${rootmnt}/mnt/5s-backing"
 mount -n --bind /run/5s-backing/boot "${rootmnt}/boot" || true
 mount -n -o move /run/5s-backing "${rootmnt}/mnt/5s-backing" || true
+
+if [ -r /proc/uptime ]; then
+  read -r up _ < /proc/uptime
+  echo "initramfs_overlay_done_uptime=${up}" >> /run/5s-boot-marks
+fi
 EOF
 chmod +x "$STAGE_ROOTFS/etc/initramfs-tools/scripts/local-bottom/5s-overlay"
 

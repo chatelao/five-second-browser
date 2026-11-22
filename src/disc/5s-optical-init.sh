@@ -28,10 +28,10 @@ else
   usb_log() { :; }
 fi
 
-usb_log "optical" "starting optical & audio init (sleep 1.5s for Track A head start)"
+usb_log "optical" "starting optical & audio init (sleep 15s so Track A & Wi-Fi/DHCP finish cleanly)"
 
-# Give Track A (Cage + Chromium) a clean 1.5s head start on boot
-sleep 1.5
+# Give Track A (Cage + Chromium) and Wi-Fi/DHCP a clean 15s head start before probing AHCI/SATA
+sleep 15
 
 # Load optical & filesystem modules first so sr_mod binds immediately when ahci probes ata2
 for mod in sr_mod cdrom sg udf isofs; do

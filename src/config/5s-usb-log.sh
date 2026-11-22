@@ -88,12 +88,52 @@ usb_log() {
   printf '%s\n' "$line" >> "$LOCAL_LOG_DIR/boot-timeline.log" 2>/dev/null || true
 }
 
+capture_pre_init_timing() {
+  local out_file="$LOCAL_LOG_DIR/pre-init-timing.log"
+  {
+    echo "=== 5s-browser pre-init & boot gap timing ==="
+    echo "captured_at_uptime: $(cat /proc/uptime 2>/dev/null || echo unknown)"
+    echo "cmdline: $(cat /proc/cmdline 2>/dev/null || echo unknown)"
+    echo "--- /run/5s-boot-marks ---"
+    if [[ -f /run/5s-boot-marks ]]; then
+      cat /run/5s-boot-marks 2>/dev/null || true
+    else
+      echo "(no /run/5s-boot-marks)"
+    fi
+    echo "--- kernel dmesg gaps >= 0.20s (first 20s) ---"
+    if command -v dmesg >/dev/null 2>&1; then
+      dmesg 2>/dev/null | awk '
+        match($0, /^\[[[:space:]]*([0-9]+\.[0-9]+)\]/, m) {
+          t = m[1] + 0.0
+          if (t > 20.0) exit
+          if (have_prev && (t - prev_t) >= 0.20) {
+            printf "+%6.3fs  (%6.3fs -> %6.3fs)  %s\n", (t - prev_t), prev_t, t, $0
+          }
+          prev_t = t
+          have_prev = 1
+        }
+      ' || true
+    fi
+  } > "$out_file" 2>&1 || true
+}
+
 sync_usb_logs() {
   ensure_usb_log_dir
   local udir
   udir="$(_resolve_usb_log_dir)"
 
+  if [[ "$MOCK_MODE" != "1" && ! -f /run/5s-usb-logs-rotated && -d /run ]]; then
+    rotate_usb_logs
+    touch /run/5s-usb-logs-rotated 2>/dev/null || true
+  fi
+
   if [[ "$MOCK_MODE" != "1" ]]; then
+    for rlog in /run/5s-cage-*.log; do
+      if [[ -f "$rlog" ]]; then
+        cp -f "$rlog" "$LOCAL_LOG_DIR/${rlog#/run/5s-}" 2>/dev/null || true
+      fi
+    done
+    capture_pre_init_timing
     if command -v dmesg >/dev/null 2>&1; then
       dmesg > "$LOCAL_LOG_DIR/kernel-dmesg.log" 2>/dev/null || true
     fi

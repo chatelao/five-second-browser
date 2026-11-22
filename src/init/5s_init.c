@@ -61,6 +61,7 @@ static void log_boot(const char *fmt, ...) {
 }
 
 static void pin_cpus(int cpu_a, int cpu_b) {
+    if (cpu_a < 0 || cpu_b < 0) return;
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(cpu_a, &set);
@@ -175,6 +176,9 @@ static void setup_pid1_mounts(void) {
     mkdir("/dev/shm", 01777);
     if (!is_submount("/dev/pts", "/dev")) (void)mount("devpts", "/dev/pts", "devpts", 0, NULL);
     if (!is_submount("/dev/shm", "/dev")) (void)mount("tmpfs", "/dev/shm", "tmpfs", 0, "mode=1777");
+    mkdir("/tmp", 01777);
+    if (!is_submount("/tmp", "/")) (void)mount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777");
+    (void)chmod("/tmp", 01777);
     if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
     attach_tty1_console();
@@ -265,13 +269,27 @@ int main(int argc, char **argv) {
         setup_pid1_mounts();
     }
 
+    struct timespec t_after_mounts = {0, 0};
+    clock_gettime(CLOCK_MONOTONIC, &t_after_mounts);
+    long pre_init_ms = g_boot_ts.tv_sec * 1000L + g_boot_ts.tv_nsec / 1000000L;
+    long mounts_ms = (t_after_mounts.tv_sec - g_boot_ts.tv_sec) * 1000L +
+                     (t_after_mounts.tv_nsec - g_boot_ts.tv_nsec) / 1000000L;
+    if (mounts_ms < 0) mounts_ms = 0;
+
     if (!test_mode) {
         char logs_dir[PATH_MAX + 32];
         mkdir(state_dir, 0755);
         snprintf(logs_dir, sizeof(logs_dir), "%.4000s/logs", state_dir);
         mkdir(logs_dir, 0755);
         snprintf(g_init_log_path, sizeof(g_init_log_path), "%.4000s/logs/init.log", state_dir);
-        log_boot("5s-init: starting (pid=%d, state_dir=%s, bin_dir=%s)", (int)getpid(), state_dir, bin_dir);
+        log_boot("5s-init: starting (pid=%d, pre_init=%ld.%03lds, mounts=%ldms, state_dir=%s, bin_dir=%s)",
+                 (int)getpid(), pre_init_ms / 1000L, pre_init_ms % 1000L, mounts_ms, state_dir, bin_dir);
+
+        int mfd = open("/run/5s-boot-marks", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (mfd >= 0) {
+            dprintf(mfd, "5s_init_entry_ms=%ld\n5s_init_mounts_ms=%ld\n", pre_init_ms, mounts_ms);
+            close(mfd);
+        }
     }
 
     struct sigaction sa;
@@ -354,22 +372,17 @@ int main(int argc, char **argv) {
         tty2_pid = spawn_debug_tty2();
     }
 
-    /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
+    /* Step 3: Track A across all CPUs with nice -10 priority */
     char browser_bin[PATH_MAX + 64];
     snprintf(browser_bin, sizeof(browser_bin), "%s/5s-browser-launch.sh", bin_dir);
 
     pid_t browser_pid = -1;
     if (access(browser_bin, X_OK) == 0) {
         char *browser_argv[] = {browser_bin, "--state-dir", state_arg, NULL};
-        browser_pid = spawn_pinned(0, 2, -10, browser_bin, browser_argv);
+        browser_pid = spawn_pinned(-1, -1, -10, browser_bin, browser_argv);
         if (!test_mode) log_boot("5s-init: spawned 5s-browser-launch.sh (pid=%d)", (int)browser_pid);
     } else if (!test_mode) {
         log_boot("5s-init: ERROR 5s-browser-launch.sh not executable at %s", browser_bin);
-    }
-
-    if (!test_mode && access(usb_log_bin, X_OK) == 0) {
-        char *rot_argv[] = {usb_log_bin, "--rotate", NULL};
-        (void)run_sync_cmd(usb_log_bin, rot_argv);
     }
 
     /* Supervisor loop until shutdown signal */

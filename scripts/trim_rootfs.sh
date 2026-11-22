@@ -66,6 +66,9 @@ trim_rootfs() {
       "$rootfs/usr/lib/chromium/vk_swiftshader_icd.json" \
       "$rootfs/usr/lib/chromium/libqt5_shim.so" \
       "$rootfs/usr/lib/chromium/libqt6_shim.so" 2>/dev/null || true
+    if [[ -d "$rootfs/etc/chromium.d" ]]; then
+      sed -i 's/--disable-dev-shm-usage//g' "$rootfs/etc/chromium.d/"* 2>/dev/null || true
+    fi
   fi
 
   echo "   [trim] Pruning firmware to Intel AC-3165 (iwlwifi-7265*)..."

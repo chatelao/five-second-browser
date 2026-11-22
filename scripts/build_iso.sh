@@ -73,6 +73,14 @@ done
 
 echo "5s-browser" > "$ROOTFS/etc/hostname"
 
+mkdir -p "$ROOTFS/etc/iwd"
+cat > "$ROOTFS/etc/iwd/main.conf" <<'EOF'
+[General]
+EnableNetworkConfiguration=true
+[Network]
+EnableIPv6=false
+EOF
+
 mkdir -p "$ROOTFS/etc/default/grub.d"
 cp "$ROOTFS/opt/5s-browser/config/grub-5s.cfg" "$ROOTFS/etc/default/grub.d/5s-browser.cfg"
 if [[ -f "$ROOTFS/opt/5s-browser/config/asound-5s.conf" ]]; then

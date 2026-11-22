@@ -74,9 +74,8 @@ BASE_CHROMIUM_FLAGS=(
   "--no-first-run"
   "--no-default-browser-check"
   "--disable-vulkan"
-  "--disable-dev-shm-usage"
   "--enable-logging=stderr"
-  "--log-level=0"
+  "--log-level=2"
   "--no-crash-upload"
   "--disable-breakpad"
   "--renderer-process-limit=2"
@@ -92,6 +91,11 @@ BASE_CHROMIUM_FLAGS=(
   "--disable-component-update"
   "--disable-sync"
   "--disable-translate"
+  "--disable-background-networking"
+  "--disable-default-apps"
+  "--disable-client-side-phishing-detection"
+  "--disable-domain-reliability"
+  "--no-pings"
   "--disable-features=Vulkan,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider"
 )
 
@@ -127,9 +131,13 @@ if [[ "$(id -u)" -eq 0 ]]; then
     export XDG_RUNTIME_DIR="/run/user/${RUN_UID}"
     mkdir -p "$XDG_RUNTIME_DIR" "$HOME/.pki/nssdb" /tmp /tmp/.X11-unix
     chmod 1777 /tmp /tmp/.X11-unix
-    chown -R "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR" "$HOME"
+    chown "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR"
     chmod 0700 "$XDG_RUNTIME_DIR"
-    chown -R "${RUN_UID}:${RUN_GID}" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"
+    for _dir in "$HOME" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"; do
+      if [[ "$(stat -c %u "$_dir" 2>/dev/null || echo -1)" != "$RUN_UID" ]]; then
+        chown -R "${RUN_UID}:${RUN_GID}" "$_dir"
+      fi
+    done
   else
     export HOME="${HOME:-/root}"
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
@@ -215,18 +223,28 @@ DRI_NODES="$(compgen -G '/dev/dri/card*' | tr '\n' ' ' || true)"
 FB_NODES="$(compgen -G '/dev/fb*' | tr '\n' ' ' || true)"
 log_msg "5s-browser: starting Cage + Chromium (user=${RUN_USER:-$(id -un)} backend=${LIBSEAT_BACKEND} dri=[${DRI_NODES:-none}] fb=[${FB_NODES:-none}] proxy=${PROXY_URL}/app)..."
 
+CHROMIUM_BIN="/usr/bin/chromium"
+if [[ -x /usr/lib/chromium/chromium ]]; then
+  CHROMIUM_BIN="/usr/lib/chromium/chromium"
+fi
+
 run_cage_tier() {
   local tier="$1"
   shift
-  local cage_log="$STATE_DIR/logs/cage-${tier}.log"
+  local cage_log="/run/5s-cage-${tier}.log"
+  if [[ ! -w /run ]]; then
+    cage_log="$STATE_DIR/logs/cage-${tier}.log"
+  fi
   local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@" "${PROXY_URL}/app")
 
   rm -f "${STATE_DIR}/chromium_profile/Singleton"* 2>/dev/null || true
-  log_msg "5s-browser: launching tier '${tier}' -> ${cage_log}"
+  log_msg "5s-browser: launching tier '${tier}' (${CHROMIUM_BIN}) -> ${cage_log}"
 
   # shellcheck disable=SC2016
   local wrapper='
-    /usr/bin/chromium "$@"
+    bin="$1"
+    shift
+    "$bin" "$@"
     rc=$?
     echo "5s-browser: chromium exited with code $rc" >&2
     exit "$rc"
@@ -235,26 +253,24 @@ run_cage_tier() {
   set +e
   if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
     setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
-      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$cage_log" 2>&1 &
+      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
   else
-    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$cage_log" 2>&1 &
+    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
   fi
   CAGE_PID=$!
 
   (
-    sleep 5
-    kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "5s-${tier}"
-    sleep 7
-    if kill -0 "$CAGE_PID" 2>/dev/null && ! pidof chromium >/dev/null 2>&1; then
-      log_msg "5s-browser: watchdog: chromium not running after 12s (${tier}); last log lines:"
-      while IFS= read -r line; do
-        log_msg "  [cage:${tier}] $line"
-      done < <(tail -n 20 "$cage_log" 2>/dev/null || true)
+    # Defer USB log/debug flush until +30s so sync() never stalls Chromium cold start
+    sleep 30
+    if kill -0 "$CAGE_PID" 2>/dev/null; then
+      if ! pidof chromium >/dev/null 2>&1; then
+        log_msg "5s-browser: watchdog: chromium not running after 30s (${tier}); last log lines:"
+        while IFS= read -r line; do
+          log_msg "  [cage:${tier}] $line"
+        done < <(tail -n 20 "$cage_log" 2>/dev/null || true)
+      fi
+      dump_debug_log "30s-${tier}"
     fi
-    sleep 3
-    kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "15s-${tier}"
-    sleep 15
-    kill -0 "$CAGE_PID" 2>/dev/null && sync_usb_logs
   ) >/dev/null 2>&1 &
   WATCHDOG_PID=$!
 
@@ -269,6 +285,10 @@ run_cage_tier() {
   kill "$WATCHDOG_PID" 2>/dev/null || true
   wait "$WATCHDOG_PID" 2>/dev/null || true
   set -e
+
+  if [[ "$cage_log" != "$STATE_DIR/logs/cage-${tier}.log" && -f "$cage_log" ]]; then
+    cp -f "$cage_log" "$STATE_DIR/logs/cage-${tier}.log" 2>/dev/null || true
+  fi
 
   CHROMIUM_RC="$(grep -oE 'chromium exited with code [0-9]+' "$cage_log" 2>/dev/null | tail -n 1 | awk '{print $NF}' || true)"
   if [[ "$RC" -eq 0 && ( -z "$CHROMIUM_RC" || "$CHROMIUM_RC" -eq 0 ) && "$ELAPSED" -ge 8 ]]; then

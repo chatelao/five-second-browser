@@ -103,12 +103,12 @@ async function pollProxyOnline() {
           await ensureTab("gmail", GMAIL_URL, true);
         }
       }
-      if (enabledFeatures.youtube) {
-        if (!enabledFeatures.gmail && allTabs.length > 0 && allTabs[0].url && allTabs[0].url.startsWith(`${PROXY_BASE}/app`) && !allTabs[0].url.includes("tab=disc")) {
+      if (enabledFeatures.youtube && !enabledFeatures.gmail) {
+        if (allTabs.length > 0 && allTabs[0].url && allTabs[0].url.startsWith(`${PROXY_BASE}/app`) && !allTabs[0].url.includes("tab=disc")) {
           await chrome.tabs.update(allTabs[0].id, { url: YOUTUBE_URL, active: true });
           tabIds.youtube = allTabs[0].id;
         } else {
-          await ensureTab("youtube", YOUTUBE_URL, !enabledFeatures.gmail);
+          await ensureTab("youtube", YOUTUBE_URL, true);
         }
       }
     }

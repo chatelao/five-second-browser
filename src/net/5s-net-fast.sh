@@ -312,7 +312,15 @@ wait_for_wlan_if() {
 
 ensure_iwd_running() {
   if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
-    mkdir -p /var/lib/iwd
+    mkdir -p /var/lib/iwd /etc/iwd
+    if [[ ! -f /etc/iwd/main.conf ]] || ! grep -q 'EnableNetworkConfiguration=true' /etc/iwd/main.conf 2>/dev/null; then
+      cat > /etc/iwd/main.conf <<'EOF'
+[General]
+EnableNetworkConfiguration=true
+[Network]
+EnableIPv6=false
+EOF
+    fi
     /usr/libexec/iwd >> "$LOCAL_LOG_DIR/iwd.log" 2>&1 &
     for _ in $(seq 1 25); do
       if iwctl device list >/dev/null 2>&1; then
@@ -337,8 +345,22 @@ scan_and_connect_wifi() {
     return 1
   fi
 
+  # Let iwd's AutoConnect=true finish first (avoids fighting its initial scan)
+  local st_out=""
+  for _ in $(seq 1 25); do
+    st_out="$(iwctl station "$iface" show 2>&1 || true)"
+    if printf '%s\n' "$st_out" | grep -qiE 'State[[:space:]]+connected'; then
+      usb_log "network" "NETWORK_FOUND=yes (ssid='$target_ssid' iface='$iface' autoconnect=1)"
+      usb_log "network" "WIFI_ASSOCIATED=yes (ssid='$target_ssid' iface='$iface')"
+      printf '%s\n' "$st_out" >> "$LOCAL_LOG_DIR/network.log" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  # Fallback: explicit scan + connect if AutoConnect didn't complete within 2.5s
   iwctl station "$iface" scan >> "$LOCAL_LOG_DIR/network.log" 2>&1 || true
-  sleep 1.5
+  sleep 1.0
 
   local networks_out=""
   networks_out="$(iwctl station "$iface" get-networks 2>&1 || true)"
@@ -358,8 +380,7 @@ scan_and_connect_wifi() {
   fi
 
   local assoc_ok=0
-  local st_out=""
-  for _ in $(seq 1 75); do
+  for _ in $(seq 1 60); do
     st_out="$(iwctl station "$iface" show 2>&1 || true)"
     if printf '%s\n' "$st_out" | grep -qiE 'State[[:space:]]+connected'; then
       assoc_ok=1
@@ -383,17 +404,20 @@ wait_for_ip_and_internet() {
   local iface="$1"
   local ssid="$2"
 
-  if command -v dhcpcd >/dev/null 2>&1; then
-    dhcpcd -4 -q --noarp --nohook lookup-hostname "$iface" >> "$LOCAL_LOG_DIR/dhcpcd.log" 2>&1 &
-  fi
-
+  # Wait up to 3s for iwd's built-in DHCP client first (no dhcpcd / 8021q overhead)
   local cur_ip=""
   local cur_gw=""
-  for _ in $(seq 1 75); do
+  local dhcp_fallback_started=0
+  for i in $(seq 1 75); do
     cur_ip="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk 'NR==1{print $4}' || true)"
     cur_gw="$(ip -4 route show default dev "$iface" 2>/dev/null | awk 'NR==1{print $3}' || true)"
     if [[ -n "$cur_ip" && -n "$cur_gw" ]]; then
       break
+    fi
+    if [[ "$i" -eq 15 && "$dhcp_fallback_started" -eq 0 ]] && command -v dhcpcd >/dev/null 2>&1; then
+      dhcp_fallback_started=1
+      usb_log "network" "iwd DHCP still pending after 3s; starting dhcpcd fallback on $iface"
+      dhcpcd -4 -q --noarp --nohook lookup-hostname "$iface" >> "$LOCAL_LOG_DIR/dhcpcd.log" 2>&1 &
     fi
     sleep 0.2
   done
@@ -404,28 +428,18 @@ wait_for_ip_and_internet() {
     return 1
   fi
 
-  local gw_ping=0
-  if ping -c 1 -W 2 "$cur_gw" >/dev/null 2>&1; then
-    gw_ping=1
-  fi
+  # Notify proxy immediately once IP + default gateway are configured (don't block on ping/curl)
+  usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' internet=ok)"
+  notify_proxy_online "true" "$ssid" "$cur_ip" "$cur_gw" "true" ""
 
-  local dns_ip=""
-  dns_ip="$(resolve_domain "mail.google.com")"
-  local inet_ok="false"
-  if curl -fsS -I -m 4 "https://clients3.google.com/generate_204" >/dev/null 2>&1 || \
-     curl -fsS -I -m 4 "https://mail.google.com" >/dev/null 2>&1; then
-    inet_ok="true"
-  fi
-
-  if [[ "$inet_ok" == "true" ]]; then
-    usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' gw_ping=$gw_ping dns_mail='${dns_ip:-none}' internet=ok)"
-    notify_proxy_online "true" "$ssid" "$cur_ip" "$cur_gw" "true" ""
-    return 0
-  fi
-
-  usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' gw_ping=$gw_ping dns_mail='${dns_ip:-none}' reason=no_internet_or_dns)"
-  notify_proxy_online "false" "$ssid" "$cur_ip" "$cur_gw" "false" "Connected to Wi-Fi ($cur_ip), but DNS/HTTPS unreachable"
-  return 1
+  # Persist lease immediately so unclean power-offs still have cached lease data on next boot
+  cat > "$NET_DIR/last_lease.env" <<EOF
+WLAN_IF=${iface}
+CACHED_IP=${cur_ip}
+CACHED_GW=${cur_gw}
+CACHED_SSID=${ssid}
+EOF
+  return 0
 }
 
 do_boot() {
@@ -454,7 +468,6 @@ do_boot() {
     usb_log "network" "ERROR: no wireless interface (/sys/class/net/wl*) appeared within 15s"
     usb_log "network" "CONNECTION_ESTABLISHED=no (reason=no_wifi_interface)"
     notify_proxy_online "false" "" "" "" "false" "No Wi-Fi adapter detected"
-    sync_usb_logs
     return 0
   fi
   usb_log "network" "wireless interface detected: $WLAN_IF"
@@ -466,16 +479,9 @@ do_boot() {
   ensure_iwd_running
 
   ip link set "$WLAN_IF" up 2>/dev/null || true
-  if [[ -n "${CACHED_IP:-}" ]]; then
-    ip addr replace "$CACHED_IP" dev "$WLAN_IF" 2>/dev/null || true
-  fi
-  if [[ -n "${CACHED_GW:-}" ]]; then
-    ip route replace default via "$CACHED_GW" dev "$WLAN_IF" 2>/dev/null || true
-  fi
 
   if [[ -z "${CACHED_SSID:-}" ]]; then
     usb_log "network" "no SSID configured yet; waiting for user setup"
-    sync_usb_logs
     return 0
   fi
 
@@ -484,12 +490,6 @@ do_boot() {
   else
     usb_log "network" "CONNECTION_ESTABLISHED=no (ssid='$CACHED_SSID' reason=wifi_association_failed)"
     notify_proxy_online "false" "$CACHED_SSID" "" "" "false" "Wi-Fi association failed for $CACHED_SSID"
-  fi
-
-  sync_usb_logs
-
-  if command -v modprobe >/dev/null 2>&1; then
-    (sleep 1; modprobe snd_hda_intel >/dev/null 2>&1 || true) &
   fi
 }
 
