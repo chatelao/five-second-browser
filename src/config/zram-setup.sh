@@ -24,3 +24,4 @@ swapon -p 100 /dev/zram0
 
 sysctl -w vm.swappiness=100 vm.page-cluster=0 >/dev/null 2>&1 || true
 echo "zram0: configured 1024M lz4 swap"
+echo "<6>zram0: configured 1024M lz4 swap" > /dev/kmsg 2>/dev/null || true

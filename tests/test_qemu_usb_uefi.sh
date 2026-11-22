@@ -118,7 +118,7 @@ fi
 
 # Enable serial console logging and software renderer fallback ONLY on the temporary test image copy
 sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
-sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER_ALLOW_SOFTWARE=1' "$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
+sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1' "$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
 sync
 
 umount "$MNT_DIR/boot/efi"

@@ -83,4 +83,5 @@ for _ in $(seq 1 100); do
 done
 
 echo "5s-browser: starting Cage + Chromium on /dev/dri/card0 (proxy=${PROXY_URL}/app)..."
+echo "<6>5s-browser: starting Cage + Chromium on /dev/dri/card0 (proxy=${PROXY_URL}/app)..." > /dev/kmsg 2>/dev/null || true
 exec taskset -c 0,2 /usr/bin/cage -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}"

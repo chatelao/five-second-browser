@@ -243,12 +243,19 @@ int main(int argc, char **argv) {
             if (exited == browser_pid) {
                 browser_pid = -1;
                 if (!test_mode) {
+                    int kfd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
                     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
                         fprintf(stderr, "5s-init: browser exited with code %d\n", WEXITSTATUS(status));
+                        if (kfd >= 0) dprintf(kfd, "<3>5s-init: browser exited with code %d\n", WEXITSTATUS(status));
+                        if (kfd >= 0) close(kfd);
                         sleep(10);
                     } else if (WIFSIGNALED(status)) {
                         fprintf(stderr, "5s-init: browser killed by signal %d\n", WTERMSIG(status));
+                        if (kfd >= 0) dprintf(kfd, "<3>5s-init: browser killed by signal %d\n", WTERMSIG(status));
+                        if (kfd >= 0) close(kfd);
                         sleep(10);
+                    } else if (kfd >= 0) {
+                        close(kfd);
                     }
                     g_shutdown_requested = 1;
                 }
