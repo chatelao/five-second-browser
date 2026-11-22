@@ -110,20 +110,30 @@ done
 
 if [[ -f "$MNT_DIR/rootfs.squashfs" ]]; then
   mount -o loop,ro "$MNT_DIR/rootfs.squashfs" "$SQFS_DIR"
-  if [[ ! -e "$SQFS_DIR/opt/5s-browser/bin/5s-init" ]]; then
-    echo "ERROR: Missing /opt/5s-browser/bin/5s-init in rootfs.squashfs" >&2
-    exit 1
-  fi
+  for sqfs_req in \
+    "$SQFS_DIR/opt/5s-browser/bin/5s-init" \
+    "$SQFS_DIR/usr/bin/cage" \
+    "$SQFS_DIR/usr/bin/Xwayland"; do
+    if [[ ! -e "$sqfs_req" ]]; then
+      echo "ERROR: Missing ${sqfs_req#"$SQFS_DIR"} in rootfs.squashfs" >&2
+      exit 1
+    fi
+  done
   mkdir -p "$MNT_DIR/overlay/upper/opt/5s-browser/bin"
   cp -a "$SQFS_DIR/opt/5s-browser/bin/5s-browser-launch.sh" \
     "$MNT_DIR/overlay/upper/opt/5s-browser/bin/5s-browser-launch.sh"
   LAUNCH_SCRIPT="$MNT_DIR/overlay/upper/opt/5s-browser/bin/5s-browser-launch.sh"
   umount "$SQFS_DIR"
 else
-  if [[ ! -e "$MNT_DIR/opt/5s-browser/bin/5s-init" ]]; then
-    echo "ERROR: Missing $MNT_DIR/opt/5s-browser/bin/5s-init in USB/SD image" >&2
-    exit 1
-  fi
+  for root_req in \
+    "$MNT_DIR/opt/5s-browser/bin/5s-init" \
+    "$MNT_DIR/usr/bin/cage" \
+    "$MNT_DIR/usr/bin/Xwayland"; do
+    if [[ ! -e "$root_req" ]]; then
+      echo "ERROR: Missing ${root_req#"$MNT_DIR"} in USB/SD image" >&2
+      exit 1
+    fi
+  done
   LAUNCH_SCRIPT="$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
 fi
 
@@ -179,7 +189,7 @@ RAN_ZRAM_INIT=0
 STARTED_BROWSER=0
 VERIFIED_BROWSER=0
 
-FATAL_RE="Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unable to drop root|Unknown symbol in module"
+FATAL_RE="Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unable to drop root|Cannot find Xwayland|Cannot create XWayland server|Unknown symbol in module"
 
 while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -198,7 +208,7 @@ while (( SECONDS < DEADLINE )); do
   fi
   if [[ "$VERIFIED_BROWSER" == "0" ]] && grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
     STARTED_BROWSER=1
-    sleep 4
+    sleep 10
     if grep -qE "$FATAL_RE" "$SERIAL_LOG" 2>/dev/null; then
       echo "ERROR: Fatal browser/wlroots/module failure detected after launch:" >&2
       tail -n 60 "$SERIAL_LOG" >&2 || true

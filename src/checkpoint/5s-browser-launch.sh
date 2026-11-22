@@ -94,7 +94,8 @@ if [[ "$(id -u)" -eq 0 ]]; then
     HOME_DIR="$(getent passwd "$RUN_USER" | cut -d: -f6 || true)"
     export HOME="${HOME_DIR:-/home/$RUN_USER}"
     export XDG_RUNTIME_DIR="/run/user/${RUN_UID}"
-    mkdir -p "$XDG_RUNTIME_DIR" "$HOME"
+    mkdir -p "$XDG_RUNTIME_DIR" "$HOME" /tmp /tmp/.X11-unix
+    chmod 1777 /tmp /tmp/.X11-unix
     chown "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR" "$HOME"
     chmod 0700 "$XDG_RUNTIME_DIR"
     chown -R "${RUN_UID}:${RUN_GID}" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"

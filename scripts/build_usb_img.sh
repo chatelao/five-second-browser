@@ -75,10 +75,10 @@ EOF
   mount --bind /proc "$STAGE_ROOTFS/proc"
   mount --bind /sys "$STAGE_ROOTFS/sys"
 
-  echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, cage, chromium, and 5s-browser..."
+  echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, xwayland, cage, chromium, and 5s-browser..."
   chroot "$STAGE_ROOTFS" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends \
-    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd cage chromium
+    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium
   cp "$DEB_FILE" "$STAGE_ROOTFS/tmp/5s-browser.deb"
   chroot "$STAGE_ROOTFS" dpkg -i /tmp/5s-browser.deb
   rm -f "$STAGE_ROOTFS/tmp/5s-browser.deb" "$STAGE_ROOTFS/usr/sbin/policy-rc.d"

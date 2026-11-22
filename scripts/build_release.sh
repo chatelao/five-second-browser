@@ -29,7 +29,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: five-second-browser <maintainers@example.com>
 Depends: python3, lz4, curl
-Recommends: seatd, cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo
+Recommends: seatd, xwayland, cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo
 Description: Five-second dual-tab Gmail & YouTube appliance for HP Pavilion 17-g111nz
  Boots directly into cached Gmail and YouTube on Intel Pentium 3825U (Broadwell-U,
  4GB RAM, Gen8 VA-API, Intel Wireless-AC 3165) while syncing live deltas.
