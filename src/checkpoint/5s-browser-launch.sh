@@ -85,7 +85,7 @@ if [[ ! -e /dev/dri/card0 && ! -e /dev/dri/card1 ]] && command -v modprobe >/dev
   modprobe i915 2>&1 | while IFS= read -r line; do log_msg "modprobe i915: $line"; done || true
 fi
 
-for _ in $(seq 1 100); do
+for _ in $(seq 1 200); do
   if [[ -e /dev/dri/card0 || -e /dev/dri/card1 ]]; then
     break
   fi
