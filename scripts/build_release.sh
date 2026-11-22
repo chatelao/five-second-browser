@@ -63,6 +63,7 @@ cp "$BUILD_BIN/5s-net-fast.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-checkpoint.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-browser-launch.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/zram-setup.sh" "$DEB_ROOT/opt/5s-browser/bin/"
+cp "$BUILD_BIN/5s-audio-init.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-usb-log.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 chmod 0755 "$DEB_ROOT/opt/5s-browser/bin/"*
 chmod 0644 "$DEB_ROOT/opt/5s-browser/bin/injected_ui.js"
@@ -71,6 +72,7 @@ cp "$ROOT_DIR/build/ext/"* "$DEB_ROOT/opt/5s-browser/ext/"
 chmod 0644 "$DEB_ROOT/opt/5s-browser/ext/"*
 
 cp "$ROOT_DIR/src/config/grub-5s.cfg" "$DEB_ROOT/opt/5s-browser/config/grub-5s.cfg"
+cp "$ROOT_DIR/src/config/asound-5s.conf" "$DEB_ROOT/opt/5s-browser/config/asound-5s.conf"
 cp "$ROOT_DIR/VERSION" "$DEB_ROOT/opt/5s-browser/VERSION"
 chmod 0644 "$DEB_ROOT/opt/5s-browser/VERSION"
 cp "$ROOT_DIR/HOWTO.md" "$DEB_ROOT/usr/share/doc/5s-browser/HOWTO.md"

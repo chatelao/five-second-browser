@@ -27,14 +27,16 @@ build: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 	cp src/checkpoint/5s-checkpoint.sh $(BIN_DIR)/5s-checkpoint.sh
 	cp src/checkpoint/5s-browser-launch.sh $(BIN_DIR)/5s-browser-launch.sh
 	cp src/config/zram-setup.sh $(BIN_DIR)/zram-setup.sh
+	cp src/config/5s-audio-init.sh $(BIN_DIR)/5s-audio-init.sh
 	cp src/config/5s-usb-log.sh $(BIN_DIR)/5s-usb-log.sh
 	cp src/config/grub-5s.cfg $(BUILD_DIR)/config/grub-5s.cfg
+	cp src/config/asound-5s.conf $(BUILD_DIR)/config/asound-5s.conf
 	cp src/ext/* $(BUILD_DIR)/ext/
 	chmod +x $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init \
 		$(BIN_DIR)/cache_proxy.py $(BIN_DIR)/disc_manager.py \
 		$(BIN_DIR)/5s-optical-init.sh $(BIN_DIR)/5s-net-fast.sh \
 		$(BIN_DIR)/5s-checkpoint.sh $(BIN_DIR)/5s-browser-launch.sh \
-		$(BIN_DIR)/zram-setup.sh $(BIN_DIR)/5s-usb-log.sh
+		$(BIN_DIR)/zram-setup.sh $(BIN_DIR)/5s-audio-init.sh $(BIN_DIR)/5s-usb-log.sh
 
 check-isa: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 	@for bin in $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init; do \

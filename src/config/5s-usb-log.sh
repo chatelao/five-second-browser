@@ -8,6 +8,7 @@ set -euo pipefail
 STATE_DIR="${STATE_DIR:-/var/cache/5s}"
 MOCK_MODE="${MOCK_MODE:-0}"
 LOCAL_LOG_DIR="${LOCAL_LOG_DIR:-$STATE_DIR/logs}"
+_EFI_MOUNTED_BY_US=0
 
 _resolve_usb_log_dir() {
   if [[ -n "${USB_LOG_DIR:-}" ]]; then
@@ -25,13 +26,21 @@ ensure_usb_log_dir() {
   mkdir -p "$LOCAL_LOG_DIR"
   local udir
   udir="$(_resolve_usb_log_dir)"
+  _EFI_MOUNTED_BY_US=0
 
   if [[ "$MOCK_MODE" != "1" && "$udir" == /boot/efi* ]]; then
     if ! mountpoint -q /boot/efi 2>/dev/null; then
-      if [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
+      local efi_dev=""
+      if [[ -e /dev/disk/by-label/5S-USB-EFI ]]; then
+        efi_dev="/dev/disk/by-label/5S-USB-EFI"
+      elif [[ -e /dev/disk/by-label/5S-EFI ]]; then
+        efi_dev="/dev/disk/by-label/5S-EFI"
+      fi
+      if [[ -n "$efi_dev" ]]; then
         mkdir -p /boot/efi
-        mount -o rw /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
-          mount -o rw /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
+        if mount -o rw "$efi_dev" /boot/efi 2>/dev/null; then
+          _EFI_MOUNTED_BY_US=1
+        fi
       fi
     else
       mount -o remount,rw /boot/efi 2>/dev/null || true
@@ -39,6 +48,16 @@ ensure_usb_log_dir() {
   fi
 
   mkdir -p "$udir/current" 2>/dev/null || true
+}
+
+release_usb_log_dir() {
+  if [[ "$MOCK_MODE" != "1" ]]; then
+    sync 2>/dev/null || true
+    if [[ "${_EFI_MOUNTED_BY_US:-0}" == "1" ]]; then
+      umount /boot/efi 2>/dev/null || true
+      _EFI_MOUNTED_BY_US=0
+    fi
+  fi
 }
 
 rotate_usb_logs() {
@@ -50,6 +69,7 @@ rotate_usb_logs() {
     mv "$udir/current" "$udir/prev" 2>/dev/null || true
   fi
   mkdir -p "$udir/current" 2>/dev/null || true
+  release_usb_log_dir
 }
 
 usb_log() {
@@ -83,6 +103,8 @@ sync_usb_logs() {
       echo "uname: $(uname -a 2>/dev/null || true)"
       echo "--- memory ---"
       free -m 2>&1 || true
+      echo "--- audio ---"
+      cat /proc/asound/cards 2>&1 || true
       echo "--- network interfaces ---"
       ip -4 -o addr 2>&1 || true
       ip -4 route 2>&1 || true
@@ -97,10 +119,8 @@ sync_usb_logs() {
 
   if [[ -d "$udir/current" ]]; then
     cp -f "$LOCAL_LOG_DIR"/* "$udir/current/" 2>/dev/null || true
-    if [[ "$MOCK_MODE" != "1" ]]; then
-      sync 2>/dev/null || true
-    fi
   fi
+  release_usb_log_dir
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -308,9 +308,9 @@ int main(int argc, char **argv) {
 
     pid_t proxy_pid = -1;
     if (access(proxy_bin, X_OK) == 0) {
-        char *proxy_argv[] = {proxy_bin, "--state-dir", state_arg, "--port", "8555", NULL};
+        char *proxy_argv[] = {proxy_bin, "--state-dir", state_arg, "--port", "8555", "--offline", NULL};
         proxy_pid = spawn_pinned(1, 3, 0, proxy_bin, proxy_argv);
-        if (!test_mode) log_boot("5s-init: spawned cache_proxy.py (pid=%d)", (int)proxy_pid);
+        if (!test_mode) log_boot("5s-init: spawned cache_proxy.py --offline (pid=%d)", (int)proxy_pid);
     } else if (!test_mode) {
         log_boot("5s-init: ERROR cache_proxy.py not executable at %s", proxy_bin);
     }
@@ -327,6 +327,15 @@ int main(int argc, char **argv) {
         char *zram_argv[] = {zram_bin, NULL};
         zram_pid = spawn_pinned(1, 3, 5, zram_bin, zram_argv);
         if (!test_mode) log_boot("5s-init: spawned zram-setup.sh (pid=%d)", (int)zram_pid);
+    }
+
+    char audio_bin[PATH_MAX + 64];
+    snprintf(audio_bin, sizeof(audio_bin), "%s/5s-audio-init.sh", bin_dir);
+    pid_t audio_pid = -1;
+    if (access(audio_bin, X_OK) == 0) {
+        char *audio_argv[] = {audio_bin, NULL};
+        audio_pid = spawn_pinned(1, 3, 10, audio_bin, audio_argv);
+        if (!test_mode) log_boot("5s-init: spawned 5s-audio-init.sh (pid=%d)", (int)audio_pid);
     }
 
     char optical_bin[PATH_MAX + 64];
@@ -410,6 +419,12 @@ int main(int argc, char **argv) {
                     int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
                     log_boot("5s-init: zram-setup.sh exited (rc=%d)", rc);
                 }
+            } else if (exited == audio_pid) {
+                audio_pid = -1;
+                if (!test_mode) {
+                    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    log_boot("5s-init: 5s-audio-init.sh exited (rc=%d)", rc);
+                }
             } else if (exited == optical_pid) {
                 optical_pid = -1;
                 if (!test_mode) {
@@ -436,6 +451,7 @@ int main(int argc, char **argv) {
 
     if (browser_pid > 0) kill(browser_pid, SIGTERM);
     if (net_pid > 0) kill(net_pid, SIGTERM);
+    if (audio_pid > 0) kill(audio_pid, SIGTERM);
     if (optical_pid > 0) kill(optical_pid, SIGTERM);
     if (proxy_pid > 0) kill(proxy_pid, SIGTERM);
     if (tty2_pid > 0) kill(tty2_pid, SIGTERM);

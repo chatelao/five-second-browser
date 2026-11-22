@@ -196,19 +196,32 @@ import_external_wifi_config() {
     fi
   done
 
-  if [[ "$MOCK_MODE" != "1" && -z "$wifi_file" ]] && [[ -e /dev/disk/by-label/5S-USB-EFI || -e /dev/disk/by-label/5S-EFI ]]; then
-    mkdir -p /boot/efi
-    mount /dev/disk/by-label/5S-USB-EFI /boot/efi 2>/dev/null || \
-      mount /dev/disk/by-label/5S-EFI /boot/efi 2>/dev/null || true
-    for cand in /boot/efi/wifi.txt /boot/efi/WIFI.TXT; do
-      if [[ -f "$cand" ]]; then
-        wifi_file="$cand"
-        break
+  local efi_mounted_by_us=0
+  if [[ "$MOCK_MODE" != "1" && -z "$wifi_file" ]]; then
+    local efi_dev=""
+    if [[ -e /dev/disk/by-label/5S-USB-EFI ]]; then
+      efi_dev="/dev/disk/by-label/5S-USB-EFI"
+    elif [[ -e /dev/disk/by-label/5S-EFI ]]; then
+      efi_dev="/dev/disk/by-label/5S-EFI"
+    fi
+    if [[ -n "$efi_dev" ]]; then
+      mkdir -p /boot/efi
+      if mount -o ro "$efi_dev" /boot/efi 2>/dev/null; then
+        efi_mounted_by_us=1
       fi
-    done
+      for cand in /boot/efi/wifi.txt /boot/efi/WIFI.TXT; do
+        if [[ -f "$cand" ]]; then
+          wifi_file="$cand"
+          break
+        fi
+      done
+    fi
   fi
 
   if [[ -z "$wifi_file" || ! -f "$wifi_file" ]]; then
+    if [[ "$efi_mounted_by_us" == "1" ]]; then
+      umount /boot/efi 2>/dev/null || true
+    fi
     usb_log "network" "wifi.txt: not found in $STATE_DIR or /boot/efi"
     return 0
   fi
@@ -247,6 +260,10 @@ import_external_wifi_config() {
   cat > "$STATE_DIR/features.json" <<EOF
 {"gmail": ${enable_gmail}, "youtube": ${enable_youtube}, "disc": ${enable_disc}}
 EOF
+
+  if [[ "$efi_mounted_by_us" == "1" ]]; then
+    umount /boot/efi 2>/dev/null || true
+  fi
 
   if [[ -z "$ext_ssid" ]]; then
     usb_log "network" "wifi.txt: found at $wifi_file but no active SSID configured"
@@ -367,7 +384,7 @@ wait_for_ip_and_internet() {
   local ssid="$2"
 
   if command -v dhcpcd >/dev/null 2>&1; then
-    dhcpcd -4 --noarp "$iface" >> "$LOCAL_LOG_DIR/dhcpcd.log" 2>&1 &
+    dhcpcd -4 -q --noarp --nohook lookup-hostname "$iface" >> "$LOCAL_LOG_DIR/dhcpcd.log" 2>&1 &
   fi
 
   local cur_ip=""

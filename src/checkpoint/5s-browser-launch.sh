@@ -87,6 +87,7 @@ BASE_CHROMIUM_FLAGS=(
   "--user-data-dir=${STATE_DIR}/chromium_profile"
   "--password-store=basic"
   "--use-mock-keychain"
+  "--alsa-output-device=default"
   "--disable-notifications"
   "--disable-component-update"
   "--disable-sync"
@@ -184,7 +185,6 @@ done
 
 dump_debug_log() {
   local reason="${1:-snapshot}"
-  local efi_log="/boot/efi/debug.log"
   local local_log="$STATE_DIR/debug.log"
 
   {
@@ -207,10 +207,8 @@ dump_debug_log() {
     dmesg 2>/dev/null | tail -n 80 || true
   } > "$local_log" 2>&1 || true
 
+  cp -f "$local_log" "$STATE_DIR/logs/debug.log" 2>/dev/null || true
   sync_usb_logs
-  if [[ -d /boot/efi ]] && cp "$local_log" "$efi_log" 2>/dev/null; then
-    sync 2>/dev/null || true
-  fi
 }
 
 DRI_NODES="$(compgen -G '/dev/dri/card*' | tr '\n' ' ' || true)"

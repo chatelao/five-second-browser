@@ -35,6 +35,7 @@ REQUIRED_EXECS=(
   "opt/5s-browser/bin/5s-checkpoint.sh"
   "opt/5s-browser/bin/5s-browser-launch.sh"
   "opt/5s-browser/bin/zram-setup.sh"
+  "opt/5s-browser/bin/5s-audio-init.sh"
   "opt/5s-browser/bin/5s-usb-log.sh"
 )
 
@@ -52,6 +53,7 @@ done
 [[ -f "$TMP_EXTRACT/opt/5s-browser/ext/h264ify.js" ]] || { echo "ERROR: missing ext/h264ify.js"; exit 1; }
 [[ -f "$TMP_EXTRACT/opt/5s-browser/VERSION" ]] || { echo "ERROR: missing VERSION"; exit 1; }
 [[ -f "$TMP_EXTRACT/opt/5s-browser/config/grub-5s.cfg" ]] || { echo "ERROR: missing grub-5s.cfg"; exit 1; }
+[[ -f "$TMP_EXTRACT/opt/5s-browser/config/asound-5s.conf" ]] || { echo "ERROR: missing asound-5s.conf"; exit 1; }
 [[ -f "$TMP_EXTRACT/usr/share/doc/5s-browser/HOWTO.md" ]] || { echo "ERROR: missing packaged HOWTO.md"; exit 1; }
 
 REQUIRED_DOC_STRINGS=(

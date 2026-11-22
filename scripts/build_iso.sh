@@ -75,6 +75,9 @@ echo "5s-browser" > "$ROOTFS/etc/hostname"
 
 mkdir -p "$ROOTFS/etc/default/grub.d"
 cp "$ROOTFS/opt/5s-browser/config/grub-5s.cfg" "$ROOTFS/etc/default/grub.d/5s-browser.cfg"
+if [[ -f "$ROOTFS/opt/5s-browser/config/asound-5s.conf" ]]; then
+  cp -f "$ROOTFS/opt/5s-browser/config/asound-5s.conf" "$ROOTFS/etc/asound.conf"
+fi
 cp "$ROOT_DIR/scripts/iso-autoinstall.sh" "$ROOTFS/opt/5s-browser/bin/iso-autoinstall.sh"
 chmod 0755 "$ROOTFS/opt/5s-browser/bin/iso-autoinstall.sh"
 

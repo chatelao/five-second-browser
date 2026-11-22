@@ -114,8 +114,14 @@ GRUB_TIMEOUT_STYLE=hidden
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
 GRUB_DISABLE_LINUX_UUID=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable,norst modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
 EOF
+
+mkdir -p "$STAGE_ROOTFS/etc/modprobe.d"
+echo "options libata force=1:disable,norst" > "$STAGE_ROOTFS/etc/modprobe.d/5s-libata.conf"
+if [[ -f "$STAGE_ROOTFS/opt/5s-browser/config/asound-5s.conf" ]]; then
+  cp -f "$STAGE_ROOTFS/opt/5s-browser/config/asound-5s.conf" "$STAGE_ROOTFS/etc/asound.conf"
+fi
 
 echo "3. Trimming rootfs & configuring SquashFS+OverlayFS initramfs..."
 trim_rootfs "$STAGE_ROOTFS"

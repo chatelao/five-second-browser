@@ -33,13 +33,26 @@ usb_log "optical" "starting optical & audio init (sleep 1.5s for Track A head st
 # Give Track A (Cage + Chromium) a clean 1.5s head start on boot
 sleep 1.5
 
-# Load SATA AHCI + optical drive + UDF/ISO9660 modules (bypasses modprobe.blacklist)
-for mod in ahci sr_mod cdrom sg udf isofs; do
+# Load optical & filesystem modules first so sr_mod binds immediately when ahci probes ata2
+for mod in sr_mod cdrom sg udf isofs; do
   if modprobe "$mod" 2>/dev/null; then
     usb_log "optical" "modprobe $mod: ok"
   else
     usb_log "optical" "modprobe $mod: failed/unavailable"
   fi
+done
+
+# Run modprobe ahci asynchronously so a slow/failing internal SATA port cannot stall init
+if modprobe ahci 2>/dev/null & then
+  usb_log "optical" "modprobe ahci started asynchronously"
+fi
+
+# Wait briefly for /dev/sr0 to appear on ata2
+for _ in $(seq 1 40); do
+  if [[ -e "$OPTICAL_DEV" ]]; then
+    break
+  fi
+  sleep 0.1
 done
 
 # Ensure udev populates /dev/sr0 properties for disc_manager.py
@@ -80,12 +93,4 @@ fi
 
 if [[ "$EFI_MOUNTED_BY_US" == "1" ]]; then
   umount /boot/efi 2>/dev/null || true
-fi
-
-# Unmute ALSA playback channels so DVD/Blu-ray & browser audio work immediately
-if command -v amixer >/dev/null 2>&1; then
-  for ctrl in Master Speaker Headphone PCM; do
-    amixer -q sset "$ctrl" 85% unmute 2>/dev/null || true
-  done
-  usb_log "optical" "unmuted ALSA mixer channels"
 fi
