@@ -428,6 +428,12 @@ wait_for_ip_and_internet() {
     return 1
   fi
 
+  if [[ ! -s /etc/resolv.conf ]] || grep -q "127.0.0.53" /etc/resolv.conf 2>/dev/null; then
+    usb_log "network" "replacing broken/stub /etc/resolv.conf with fallback DNS (1.1.1.1, 8.8.8.8)"
+    rm -f /etc/resolv.conf 2>/dev/null || true
+    printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf 2>/dev/null || true
+  fi
+
   # Notify proxy immediately once IP + default gateway are configured (don't block on ping/curl)
   usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$ssid' ip='$cur_ip' gw='$cur_gw' internet=ok)"
   notify_proxy_online "true" "$ssid" "$cur_ip" "$cur_gw" "true" ""
@@ -462,6 +468,11 @@ do_boot() {
     usb_log "network" "CONNECTION_ESTABLISHED=yes (ssid='$mock_ssid' ip='${CACHED_IP:-192.168.1.42/24}' gw='${CACHED_GW:-192.168.1.1}' internet=ok mock=1)"
     notify_proxy_online "true" "$mock_ssid" "${CACHED_IP:-192.168.1.42/24}" "${CACHED_GW:-192.168.1.1}" "true" ""
     return 0
+  fi
+
+  if command -v modprobe >/dev/null 2>&1; then
+    modprobe iwlwifi 2>/dev/null || true
+    modprobe iwlmvm 2>/dev/null || true
   fi
 
   if ! wait_for_wlan_if; then

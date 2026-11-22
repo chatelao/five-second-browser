@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import sqlite3
 import subprocess
 import sys
@@ -128,6 +129,52 @@ class ProxyState:
                     pass
                 break
         return features
+
+    def scan_wifi(self) -> list[dict]:
+        if os.environ.get("MOCK_MODE", "0") == "1":
+            return [
+                {"ssid": "HomeWiFi-5G", "security": "psk", "signal": "****"},
+                {"ssid": "GuestWiFi", "security": "open", "signal": "**"},
+            ]
+        iface = "wlan0"
+        try:
+            for name in sorted(os.listdir("/sys/class/net")):
+                if name.startswith("wl"):
+                    iface = name
+                    break
+        except OSError:
+            pass
+        try:
+            subprocess.run(["iwctl", "station", iface, "scan"], capture_output=True, text=True, timeout=4.0, check=False)
+            time.sleep(0.8)
+            res = subprocess.run(
+                ["iwctl", "station", iface, "get-networks"],
+                capture_output=True,
+                text=True,
+                timeout=4.0,
+                check=False,
+            )
+            ansi_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+            networks: list[dict] = []
+            seen: set[str] = set()
+            for raw_ln in (res.stdout or "").splitlines():
+                clean = ansi_re.sub("", raw_ln).strip()
+                if not clean or clean.startswith("Available") or clean.startswith("Network name") or clean.startswith("---"):
+                    continue
+                if clean.startswith(">"):
+                    clean = clean[1:].strip()
+                parts = re.split(r"\s{2,}", clean)
+                if len(parts) >= 2:
+                    ssid = parts[0].strip()
+                    sec = parts[1].strip() if len(parts) >= 2 else ""
+                    sig = parts[2].strip() if len(parts) >= 3 else ""
+                    if ssid and ssid not in seen:
+                        seen.add(ssid)
+                        networks.append({"ssid": ssid, "security": sec, "signal": sig})
+            return networks
+        except Exception as exc:
+            self.log_proxy("warn", f"scan_wifi failed: {exc}")
+            return []
 
     def is_wifi_configured(self) -> bool:
         if os.environ.get("SKIP_WIFI_SETUP") == "1":
@@ -418,6 +465,12 @@ def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
   input {{ width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 14px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: #fff; font-size: 14px; }}
   button {{ width: 100%; padding: 11px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer; }}
   .btn-secondary {{ margin-top: 10px; background: #334155; font-size: 13px; padding: 9px; }}
+  .btn-scan {{ margin-bottom: 10px; background: #0f766e; font-size: 13px; padding: 8px; }}
+  #scan-list {{ display: none; max-height: 120px; overflow-y: auto; margin-bottom: 12px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; }}
+  .net-item {{ padding: 7px 10px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; border-bottom: 1px solid #1e293b; }}
+  .net-item:hover {{ background: #1e293b; }}
+  .diag-link {{ margin-top: 12px; text-align: center; font-size: 12px; color: #64748b; }}
+  .diag-link a {{ color: #38bdf8; text-decoration: none; }}
   #msg {{ margin-top: 12px; font-size: 13px; color: #fbbf24; min-height: 18px; }}
 </style>
 </head>
@@ -425,6 +478,8 @@ def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
   <div class="card">
     <h1>Connect to Wi-Fi</h1>
     <p>One-time setup for {subtitle_target}. Everything else is automatic.</p>
+    <button id="btn-scan-wifi" type="button" class="btn-scan">Scan Wi-Fi Networks</button>
+    <div id="scan-list"></div>
     <form id="wifi-form">
       <label for="ssid">Wi-Fi Name (SSID)</label>
       <input id="ssid" name="ssid" type="text" required autofocus placeholder="Your Wi-Fi network">
@@ -434,9 +489,49 @@ def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
     </form>
     {disc_btn_html}
     <div id="msg"></div>
+    <div class="diag-link"><a href="/diag">System Diagnostics (F12)</a></div>
   </div>
   <script>
     {disc_js}
+    window.addEventListener("keydown", function (e) {{
+      if (e.key === "F12") {{ e.preventDefault(); window.location.href = "/diag"; }}
+    }});
+    document.getElementById("btn-scan-wifi").addEventListener("click", async function () {{
+      const list = document.getElementById("scan-list");
+      const msg = document.getElementById("msg");
+      msg.textContent = "Scanning Wi-Fi networks...";
+      try {{
+        const res = await fetch("/__5s__/wifi-scan");
+        const data = await res.json();
+        const nets = data.networks || [];
+        list.innerHTML = "";
+        if (nets.length === 0) {{
+          list.style.display = "none";
+          msg.textContent = "No Wi-Fi networks found yet. Check Diagnostics (F12).";
+          return;
+        }}
+        nets.forEach(function (n) {{
+          const row = document.createElement("div");
+          row.className = "net-item";
+          const left = document.createElement("span");
+          left.textContent = n.ssid;
+          const right = document.createElement("span");
+          right.style.color = "#94a3b8";
+          right.textContent = [n.security, n.signal].filter(Boolean).join(" ");
+          row.appendChild(left);
+          row.appendChild(right);
+          row.addEventListener("click", function () {{
+            document.getElementById("ssid").value = n.ssid;
+            document.getElementById("password").focus();
+          }});
+          list.appendChild(row);
+        }});
+        list.style.display = "block";
+        msg.textContent = "Select a network or enter SSID manually.";
+      }} catch (err) {{
+        msg.textContent = "Scan error: " + err;
+      }}
+    }});
     document.getElementById("wifi-form").addEventListener("submit", async function (e) {{
       e.preventDefault();
       const msg = document.getElementById("msg");
@@ -627,6 +722,22 @@ def collect_diagnostics(state: ProxyState) -> dict:
                 except OSError:
                     pass
 
+    audio_cards: list[str] = []
+    if os.path.isfile("/proc/asound/cards"):
+        try:
+            with open("/proc/asound/cards", "r", encoding="utf-8", errors="replace") as f:
+                audio_cards = [ln.rstrip() for ln in f.read().splitlines() if ln.strip()]
+        except OSError:
+            pass
+
+    resolv_conf: list[str] = []
+    if os.path.isfile("/etc/resolv.conf"):
+        try:
+            with open("/etc/resolv.conf", "r", encoding="utf-8", errors="replace") as f:
+                resolv_conf = [ln.strip() for ln in f.read().splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        except OSError:
+            pass
+
     return {
         "version": get_image_version(),
         "uptime_s": uptime_s,
@@ -634,6 +745,8 @@ def collect_diagnostics(state: ProxyState) -> dict:
         "hostname": uname.nodename,
         "mock_mode": os.environ.get("MOCK_MODE", "0") == "1",
         "state_dir": state.state_dir,
+        "audio_cards": audio_cards,
+        "resolv_conf": resolv_conf,
         "network": {
             "online": state.online,
             "wifi_configured": state.is_wifi_configured(),
@@ -650,6 +763,7 @@ def collect_diagnostics(state: ProxyState) -> dict:
             "files": log_files,
             "network_tail": _tail_file(os.path.join(state.logs_dir, "network.log")),
             "apps_tail": _tail_file(os.path.join(state.logs_dir, "apps.log")),
+            "audio_tail": _tail_file(os.path.join(state.logs_dir, "audio.log")),
             "init_tail": _tail_file(os.path.join(state.logs_dir, "init.log")),
             "proxy_tail": _tail_file(os.path.join(state.logs_dir, "proxy.log")),
             "timeline_tail": _tail_file(os.path.join(state.logs_dir, "boot-timeline.log")),
@@ -738,6 +852,7 @@ def render_diag_html() -> bytes:
           row("Hostname", d.hostname),
           row("Uptime", d.uptime_s !== null ? d.uptime_s.toFixed(1) + " s" : "n/a"),
           row("State Dir", d.state_dir),
+          row("Audio Cards", (d.audio_cards || []).join(" | ") || "none"),
           row("Log Files", (d.logs.files || []).map(f => f.name + " (" + f.bytes + "B)").join(", ") || "none")
         ].join("");
 
@@ -748,6 +863,7 @@ def render_diag_html() -> bytes:
           row("SSID", n.ssid || "(none)"),
           row("IPv4 Address", n.ip || "(none)"),
           row("Gateway", n.gw || "(none)"),
+          row("DNS (resolv.conf)", (d.resolv_conf || []).join(", ") || "(empty)"),
           row("Internet / HTTPS", n.internet_ok ? "Reachable" : "Unreachable", n.internet_ok ? "ok" : "warn"),
           row("Last Error", n.net_error || "none", n.net_error ? "err" : ""),
           row("Cached Items", n.cached_items)
@@ -825,6 +941,11 @@ def make_handler(state: ProxyState):
 
             if parsed.path == "/__5s__/diagnostics":
                 payload = json.dumps(collect_diagnostics(state)).encode("utf-8")
+                self._send(200, "application/json", payload)
+                return
+
+            if parsed.path == "/__5s__/wifi-scan":
+                payload = json.dumps({"networks": state.scan_wifi()}).encode("utf-8")
                 self._send(200, "application/json", payload)
                 return
 

@@ -80,7 +80,13 @@ def main() -> None:
                 setup_html = resp.read().decode("utf-8")
                 assert resp.getcode() == 200
                 assert "Connect to Wi-Fi" in setup_html
+                assert "Scan Wi-Fi Networks" in setup_html
                 assert "Watch DVD / Blu-ray Offline" in setup_html
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/wifi-scan") as resp:
+                scan_data = json.loads(resp.read().decode("utf-8"))
+                assert resp.getcode() == 200
+                assert any(n.get("ssid") == "HomeWiFi-5G" for n in scan_data.get("networks", []))
 
             with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app?tab=disc") as resp:
                 disc_app = resp.read().decode("utf-8")
@@ -259,6 +265,7 @@ def main() -> None:
                 assert djson_resp.getcode() == 200
                 assert djson.get("version")
                 assert "network" in djson and "disc" in djson and "logs" in djson
+                assert "audio_cards" in djson and "resolv_conf" in djson
                 assert any("ERR_NAME_NOT_RESOLVED" in ln for ln in djson["logs"].get("apps_tail", []))
 
             # 6. Verify feature toggles in wifi.txt control UI tabs, status API, and disc endpoints

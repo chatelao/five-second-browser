@@ -78,7 +78,7 @@ EOF
   echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, xwayland, cage, chromium, mpv/disc libs, and 5s-browser..."
   chroot "$STAGE_ROOTFS" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends \
-    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
+    firmware-iwlwifi intel-microcode wireless-regdb iproute2 i965-va-driver dbus iwd dhcpcd-base seatd xwayland cage chromium \
     mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
   if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
@@ -100,6 +100,11 @@ for grp in video render input audio tty cdrom; do
 done
 
 echo "5s-browser" > "$STAGE_ROOTFS/etc/hostname"
+rm -f "$STAGE_ROOTFS/etc/resolv.conf"
+cat > "$STAGE_ROOTFS/etc/resolv.conf" <<'EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
 
 cat > "$STAGE_ROOTFS/etc/fstab" <<'EOF'
 LABEL=5s-usb-root  /          ext4  defaults,noatime,commit=60  0  1
@@ -122,11 +127,11 @@ GRUB_TIMEOUT_STYLE=hidden
 GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISABLE_OS_PROBER=true
 GRUB_DISABLE_LINUX_UUID=true
-GRUB_CMDLINE_LINUX_DEFAULT="root=LABEL=5s-usb-root rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off intel_iommu=off initcall_blacklist=crb_acpi_driver_init usb-storage.delay_use=0 i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable,norst modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
+GRUB_CMDLINE_LINUX_DEFAULT="rootwait quiet loglevel=3 log_buf_len=4M rd.udev.log_level=3 mitigations=off intel_iommu=off initcall_blacklist=crb_acpi_driver_init usb-storage.delay_use=0 i915.fastboot=1 vt.global_cursor_default=0 libata.force=1:disable,1:norst modprobe.blacklist=ahci,btusb,bluetooth,uvcvideo,pcspkr,hp_accel,lis3lv02d init=/opt/5s-browser/bin/5s-init"
 EOF
 
 mkdir -p "$STAGE_ROOTFS/etc/modprobe.d"
-echo "options libata force=1:disable,norst" > "$STAGE_ROOTFS/etc/modprobe.d/5s-libata.conf"
+echo "options libata force=1:disable,1:norst" > "$STAGE_ROOTFS/etc/modprobe.d/5s-libata.conf"
 if [[ -f "$STAGE_ROOTFS/opt/5s-browser/config/asound-5s.conf" ]]; then
   cp -f "$STAGE_ROOTFS/opt/5s-browser/config/asound-5s.conf" "$STAGE_ROOTFS/etc/asound.conf"
 fi
@@ -230,8 +235,10 @@ umount "$STAGE_ROOTFS/sys"
 umount "$STAGE_ROOTFS/proc"
 umount "$STAGE_ROOTFS/dev"
 
-echo "4. Building compressed SquashFS rootfs..."
-if mksquashfs "$STAGE_ROOTFS" "$SQFS_FILE" -e boot -comp zstd -Xcompression-level 19 -noappend 2>/dev/null; then
+echo "4. Building fast-decompression SquashFS rootfs (LZ4)..."
+if mksquashfs "$STAGE_ROOTFS" "$SQFS_FILE" -e boot -comp lz4 -Xhc -noappend 2>/dev/null; then
+  true
+elif mksquashfs "$STAGE_ROOTFS" "$SQFS_FILE" -e boot -comp zstd -Xcompression-level 3 -noappend 2>/dev/null; then
   true
 else
   mksquashfs "$STAGE_ROOTFS" "$SQFS_FILE" -e boot -comp xz -noappend

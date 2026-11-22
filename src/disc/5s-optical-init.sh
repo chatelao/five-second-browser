@@ -28,7 +28,12 @@ else
   usb_log() { :; }
 fi
 
-usb_log "optical" "starting optical & audio init (sleep 15s so Track A & Wi-Fi/DHCP finish cleanly)"
+usb_log "optical" "starting optical init (sleep 15s so Track A & Wi-Fi/DHCP finish cleanly)"
+
+if [[ -f "$STATE_DIR/features.json" ]] && grep -q '"disc"[[:space:]]*:[[:space:]]*false' "$STATE_DIR/features.json" 2>/dev/null; then
+  usb_log "optical" "disc feature disabled in features.json; skipping ahci/sr_mod"
+  exit 0
+fi
 
 # Give Track A (Cage + Chromium) and Wi-Fi/DHCP a clean 15s head start before probing AHCI/SATA
 sleep 15

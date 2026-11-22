@@ -181,6 +181,28 @@ static void setup_pid1_mounts(void) {
     (void)chmod("/tmp", 01777);
     if (!is_submount("/run", "/")) (void)mount("tmpfs", "/run", "tmpfs", 0, "mode=0755");
     (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_NOATIME, NULL);
+    {
+        char hbuf[128] = "5s-browser";
+        int hfd = open("/etc/hostname", O_RDONLY | O_CLOEXEC);
+        if (hfd >= 0) {
+            ssize_t hn = read(hfd, hbuf, sizeof(hbuf) - 1);
+            close(hfd);
+            if (hn > 0) {
+                hbuf[hn] = '\0';
+                for (ssize_t k = 0; k < hn; k++) {
+                    if (hbuf[k] == '\n' || hbuf[k] == '\r' || hbuf[k] == ' ') {
+                        hbuf[k] = '\0';
+                        break;
+                    }
+                }
+            }
+        }
+        if (hbuf[0] != '\0') {
+            if (sethostname(hbuf, strlen(hbuf)) != 0) {
+                /* Best-effort hostname setup */
+            }
+        }
+    }
     attach_tty1_console();
     bring_up_loopback();
 
@@ -278,9 +300,20 @@ int main(int argc, char **argv) {
 
     if (!test_mode) {
         char logs_dir[PATH_MAX + 32];
+        char cache_dir[PATH_MAX + 32];
         mkdir(state_dir, 0755);
         snprintf(logs_dir, sizeof(logs_dir), "%.4000s/logs", state_dir);
+        snprintf(cache_dir, sizeof(cache_dir), "%.4000s/chromium_cache", state_dir);
         mkdir(logs_dir, 0755);
+        mkdir(cache_dir, 0755);
+        if (getpid() == 1) {
+            if (!is_submount(logs_dir, state_dir)) {
+                (void)mount("tmpfs", logs_dir, "tmpfs", 0, "size=64M,mode=0755");
+            }
+            if (!is_submount(cache_dir, state_dir)) {
+                (void)mount("tmpfs", cache_dir, "tmpfs", 0, "size=256M,mode=0755");
+            }
+        }
         snprintf(g_init_log_path, sizeof(g_init_log_path), "%.4000s/logs/init.log", state_dir);
         log_boot("5s-init: starting (pid=%d, pre_init=%ld.%03lds, mounts=%ldms, state_dir=%s, bin_dir=%s)",
                  (int)getpid(), pre_init_ms / 1000L, pre_init_ms % 1000L, mounts_ms, state_dir, bin_dir);
