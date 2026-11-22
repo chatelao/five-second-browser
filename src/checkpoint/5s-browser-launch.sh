@@ -42,18 +42,13 @@ fi
 PROXY_READY="async"
 log_msg "5s-browser: proxy_ready=${PROXY_READY}, preparing Wayland & DRM..."
 
-CHROMIUM_FLAGS=(
+BASE_CHROMIUM_FLAGS=(
   "--app=${PROXY_URL}/app"
   "--kiosk"
   "--start-fullscreen"
   "--no-first-run"
   "--no-default-browser-check"
-  "--ozone-platform=wayland"
   "--disable-vulkan"
-  "--enable-features=UseOzonePlatform,VaapiVideoDecoder,VaapiVideoEncoder,CanvasOopRasterization"
-  "--ignore-gpu-blocklist"
-  "--enable-gpu-rasterization"
-  "--enable-zero-copy"
   "--renderer-process-limit=2"
   "--process-per-site"
   "--js-flags=--max-old-space-size=768"
@@ -72,7 +67,7 @@ CHROMIUM_FLAGS=(
 )
 
 if [[ "$(id -u)" -eq 0 ]]; then
-  CHROMIUM_FLAGS+=("--no-sandbox" "--test-type")
+  BASE_CHROMIUM_FLAGS+=("--no-sandbox" "--test-type")
 fi
 
 export XDG_VTNR="${XDG_VTNR:-1}"
@@ -134,6 +129,15 @@ fi
 export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-$DEFAULT_LIBSEAT_BACKEND}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
 
+if command -v dbus-daemon >/dev/null 2>&1 && [[ ! -S "${XDG_RUNTIME_DIR}/bus" ]]; then
+  if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
+      dbus-daemon --session --address="unix:path=${XDG_RUNTIME_DIR}/bus" --fork --nopidfile 2>/dev/null || true
+  else
+    dbus-daemon --session --address="unix:path=${XDG_RUNTIME_DIR}/bus" --fork --nopidfile 2>/dev/null || true
+  fi
+fi
+
 if [[ ! -e /dev/dri/card0 && ! -e /dev/dri/card1 ]] && command -v modprobe >/dev/null 2>&1; then
   log_msg "5s-browser: running modprobe i915..."
   modprobe i915 2>&1 | while IFS= read -r line; do log_msg "modprobe i915: $line"; done || true
@@ -186,43 +190,80 @@ DRI_NODES="$(compgen -G '/dev/dri/card*' | tr '\n' ' ' || true)"
 FB_NODES="$(compgen -G '/dev/fb*' | tr '\n' ' ' || true)"
 log_msg "5s-browser: starting Cage + Chromium (user=${RUN_USER:-$(id -un)} backend=${LIBSEAT_BACKEND} dri=[${DRI_NODES:-none}] fb=[${FB_NODES:-none}] proxy=${PROXY_URL}/app)..."
 
-set +e
-if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
-  setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
-    /usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
-else
-  /usr/bin/cage -d -s -- /usr/bin/chromium "${CHROMIUM_FLAGS[@]}" >"$STATE_DIR/cage.log" 2>&1 &
-fi
-CAGE_PID=$!
+run_cage_tier() {
+  local tier="$1"
+  shift
+  local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@")
 
-(
-  sleep 5
-  kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "5s"
-  sleep 7
-  if kill -0 "$CAGE_PID" 2>/dev/null && ! pidof chromium >/dev/null 2>&1; then
-    log_msg "5s-browser: watchdog: chromium not running after 12s; last cage.log lines:"
-    while IFS= read -r line; do
-      log_msg "  [cage] $line"
-    done < <(tail -n 20 "$STATE_DIR/cage.log" 2>/dev/null || true)
+  rm -f "${STATE_DIR}/chromium_profile/Singleton"* 2>/dev/null || true
+
+  local wrapper='
+    /usr/bin/chromium "$@"
+    rc=$?
+    echo "5s-browser: chromium exited with code $rc" >&2
+    exit "$rc"
+  '
+
+  set +e
+  if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
+      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$STATE_DIR/cage.log" 2>&1 &
+  else
+    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "${tier_flags[@]}" >"$STATE_DIR/cage.log" 2>&1 &
   fi
-  sleep 3
-  kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "15s"
-) >/dev/null 2>&1 &
-WATCHDOG_PID=$!
+  CAGE_PID=$!
 
-wait "$CAGE_PID"
-RC=$?
-kill "$WATCHDOG_PID" 2>/dev/null || true
-wait "$WATCHDOG_PID" 2>/dev/null || true
+  (
+    sleep 5
+    kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "5s-${tier}"
+    sleep 7
+    if kill -0 "$CAGE_PID" 2>/dev/null && ! pidof chromium >/dev/null 2>&1; then
+      log_msg "5s-browser: watchdog: chromium not running after 12s; last cage.log lines:"
+      while IFS= read -r line; do
+        log_msg "  [cage] $line"
+      done < <(tail -n 20 "$STATE_DIR/cage.log" 2>/dev/null || true)
+    fi
+    sleep 3
+    kill -0 "$CAGE_PID" 2>/dev/null && dump_debug_log "15s-${tier}"
+  ) >/dev/null 2>&1 &
+  WATCHDOG_PID=$!
+
+  local t_start
+  t_start="$(date +%s)"
+  wait "$CAGE_PID"
+  RC=$?
+  local t_end
+  t_end="$(date +%s)"
+  ELAPSED=$(( t_end - t_start ))
+
+  kill "$WATCHDOG_PID" 2>/dev/null || true
+  wait "$WATCHDOG_PID" 2>/dev/null || true
+  set -e
+
+  CHROMIUM_RC="$(grep -oE 'chromium exited with code [0-9]+' "$STATE_DIR/cage.log" 2>/dev/null | tail -n 1 | awk '{print $NF}' || true)"
+  if [[ "$RC" -eq 0 && ( -z "$CHROMIUM_RC" || "$CHROMIUM_RC" -eq 0 ) && "$ELAPSED" -ge 8 ]]; then
+    return 0
+  fi
+  log_msg "5s-browser: tier '${tier}' ended after ${ELAPSED}s (cage_rc=${RC}, chromium_rc=${CHROMIUM_RC:-unknown}). Last log lines:"
+  while IFS= read -r line; do
+    log_msg "  [cage] $line"
+  done < <(tail -n 25 "$STATE_DIR/cage.log" 2>/dev/null || true)
+  return 1
+}
+
+FINAL_RC=1
+if run_cage_tier "wayland-vaapi" "--ozone-platform=wayland" "--enable-features=UseOzonePlatform,VaapiVideoDecoder" "--enable-gpu-rasterization"; then
+  FINAL_RC=0
+elif run_cage_tier "x11-vaapi" "--ozone-platform=x11" "--enable-features=VaapiVideoDecoder"; then
+  FINAL_RC=0
+elif run_cage_tier "x11-software" "--ozone-platform=x11" "--disable-gpu"; then
+  FINAL_RC=0
+fi
+
 if [[ -n "$SEATD_PID" ]]; then
   kill "$SEATD_PID" 2>/dev/null || true
   wait "$SEATD_PID" 2>/dev/null || true
 fi
-set -e
 
-dump_debug_log "exit-${RC}"
-log_msg "5s-browser: cage exited with code ${RC}. Last log lines:"
-while IFS= read -r line; do
-  log_msg "  [cage] $line"
-done < <(tail -n 25 "$STATE_DIR/cage.log" 2>/dev/null || true)
-exit "$RC"
+dump_debug_log "exit-${FINAL_RC}"
+exit "$FINAL_RC"

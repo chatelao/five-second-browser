@@ -336,12 +336,18 @@ int main(int argc, char **argv) {
                 browser_pid = -1;
                 if (!test_mode) {
                     if (WIFEXITED(status)) {
-                        log_boot("5s-init: browser exited with code %d", WEXITSTATUS(status));
+                        int rc = WEXITSTATUS(status);
+                        log_boot("5s-init: browser exited with code %d", rc);
+                        if (rc == 0) {
+                            sleep(15);
+                            g_shutdown_requested = 1;
+                        } else {
+                            log_boot("5s-init: browser failed; press Alt+F2 for shell or power button to shut down.");
+                        }
                     } else if (WIFSIGNALED(status)) {
                         log_boot("5s-init: browser killed by signal %d", WTERMSIG(status));
+                        log_boot("5s-init: press Alt+F2 for shell or power button to shut down.");
                     }
-                    sleep(15);
-                    g_shutdown_requested = 1;
                 }
             } else if (exited == proxy_pid) {
                 proxy_pid = -1;
