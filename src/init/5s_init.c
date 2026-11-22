@@ -287,6 +287,14 @@ int main(int argc, char **argv) {
         zram_pid = spawn_pinned(1, 3, 5, zram_bin, zram_argv);
     }
 
+    char optical_bin[PATH_MAX + 64];
+    snprintf(optical_bin, sizeof(optical_bin), "%s/5s-optical-init.sh", bin_dir);
+    pid_t optical_pid = -1;
+    if (access(optical_bin, X_OK) == 0) {
+        char *optical_argv[] = {optical_bin, NULL};
+        optical_pid = spawn_pinned(1, 3, 15, optical_bin, optical_argv);
+    }
+
     pid_t udev_pid = -1;
     pid_t tty2_pid = -1;
     if (getpid() == 1 && !test_mode) {
@@ -332,6 +340,8 @@ int main(int argc, char **argv) {
                 net_pid = -1;
             } else if (exited == zram_pid) {
                 zram_pid = -1;
+            } else if (exited == optical_pid) {
+                optical_pid = -1;
             } else if (exited == udev_pid) {
                 udev_pid = -1;
             } else if (exited == tty2_pid) {
@@ -351,6 +361,7 @@ int main(int argc, char **argv) {
 
     if (browser_pid > 0) kill(browser_pid, SIGTERM);
     if (net_pid > 0) kill(net_pid, SIGTERM);
+    if (optical_pid > 0) kill(optical_pid, SIGTERM);
     if (proxy_pid > 0) kill(proxy_pid, SIGTERM);
     if (tty2_pid > 0) kill(tty2_pid, SIGTERM);
 

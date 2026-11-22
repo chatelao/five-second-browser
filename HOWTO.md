@@ -49,8 +49,14 @@ Choose **either** the 100% portable USB 3.0 / SD card image (leaves your interna
 | :--- | :--- |
 | `F1` or `Alt+1` | Switch instantly to **Gmail** |
 | `F2` or `Alt+2` | Switch instantly to **YouTube** |
+| `F3` or `Alt+3` | Switch to **Disc** (built-in DVD / Blu-ray player) |
 | `Power Button` | Save snapshot and power off cleanly |
 
+- **Optical Disc Playback (DVD & Blu-ray):**
+  - Press `F3` (or click **Watch DVD / Blu-ray Offline** on the Wi-Fi setup screen) to open the **Disc** tab.
+  - The built-in optical drive is probed automatically for DVD and Blu-ray capability.
+  - For encrypted Blu-ray discs (when supported by the drive), place your `KEYDB.cfg` file on the `5S-USB-EFI` FAT32 partition (`/boot/efi/KEYDB.cfg`).
+  - For commercial CSS-encrypted DVDs, build the image with `ENABLE_LIBDVDCSS=1` (subject to local laws).
 - **Status Pill (Top Right):** `● Cached (Connecting...)` (instant local cache) → `● Live` (synced).
 - **Maintenance / Recovery Shell:** Hold `Shift` (or `Esc`) during power-on to open GRUB, press `e`, and change `init=/opt/5s-browser/bin/5s-init` to `init=/bin/bash`.
 

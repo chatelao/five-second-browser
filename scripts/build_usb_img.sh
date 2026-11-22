@@ -75,10 +75,15 @@ EOF
   mount --bind /proc "$STAGE_ROOTFS/proc"
   mount --bind /sys "$STAGE_ROOTFS/sys"
 
-  echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, xwayland, cage, chromium, and 5s-browser..."
+  echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API, iwd, seatd, xwayland, cage, chromium, mpv/disc libs, and 5s-browser..."
   chroot "$STAGE_ROOTFS" apt-get update
   DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends \
-    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium
+    firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium \
+    mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
+  if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
+    DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg || true
+  fi
   cp "$DEB_FILE" "$STAGE_ROOTFS/tmp/5s-browser.deb"
   chroot "$STAGE_ROOTFS" dpkg -i /tmp/5s-browser.deb
   rm -f "$STAGE_ROOTFS/tmp/5s-browser.deb" "$STAGE_ROOTFS/usr/sbin/policy-rc.d"
@@ -88,7 +93,7 @@ fi
 if ! chroot "$STAGE_ROOTFS" id -u kiosk >/dev/null 2>&1; then
   chroot "$STAGE_ROOTFS" useradd -r -m -d /home/kiosk -s /bin/sh kiosk
 fi
-for grp in video render input audio tty; do
+for grp in video render input audio tty cdrom; do
   if chroot "$STAGE_ROOTFS" getent group "$grp" >/dev/null 2>&1; then
     chroot "$STAGE_ROOTFS" usermod -aG "$grp" kiosk || true
   fi

@@ -111,7 +111,7 @@ No URL bar, no bookmarks bar, no settings menus, no window borders.
 
 ```text
 +------------------------------------------------------------------------+
-| [ ✉ Gmail (2 new) ]  [ ▶ YouTube ]              ● Cached -> Syncing... |  <-- 24px hardware-accelerated tab bar
+| [ ✉ Gmail (2 new) ]  [ ▶ YouTube ]  [ 💿 Disc ]  ● Cached -> Syncing... |  <-- 24px hardware-accelerated tab bar
 +------------------------------------------------------------------------+
 |                                                                        |
 |  Inbox                                         [Search mail         ]  |
@@ -127,8 +127,9 @@ No URL bar, no bookmarks bar, no settings menus, no window borders.
 ```
 
 - **Keyboard Shortcuts:**
-  - `Alt+1` / `F1`: Switch to Gmail tab (zero re-render, both tabs stay mounted in memory).
+  - `Alt+1` / `F1`: Switch to Gmail tab (zero re-render, all tabs stay mounted in memory).
   - `Alt+2` / `F2`: Switch to YouTube tab.
+  - `Alt+3` / `F3`: Switch to **Disc** tab (built-in optical drive DVD & conditional Blu-ray playback via `mpv` + Gen8 VA-API; also accessible offline from the Wi-Fi setup screen).
   - `Power Button`: Triggers graceful 1.8-second checkpoint & poweroff.
 
 ---

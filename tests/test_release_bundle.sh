@@ -29,6 +29,8 @@ REQUIRED_EXECS=(
   "opt/5s-browser/bin/5s-init"
   "opt/5s-browser/bin/5s-fb-splash"
   "opt/5s-browser/bin/cache_proxy.py"
+  "opt/5s-browser/bin/disc_manager.py"
+  "opt/5s-browser/bin/5s-optical-init.sh"
   "opt/5s-browser/bin/5s-net-fast.sh"
   "opt/5s-browser/bin/5s-checkpoint.sh"
   "opt/5s-browser/bin/5s-browser-launch.sh"
@@ -54,6 +56,7 @@ REQUIRED_DOC_STRINGS=(
   "5s-browser_${VERSION}_amd64.deb"
   "F1"
   "F2"
+  "F3"
 )
 
 for needle in "${REQUIRED_DOC_STRINGS[@]}"; do

@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 TESTS=(
   "bash tests/test_fb_splash.sh"
   "bash tests/test_init_lifecycle.sh"
+  "python3 tests/test_disc_manager.py"
   "python3 tests/test_cache_proxy.py"
   "bash tests/test_net_fast.sh"
   "bash tests/test_checkpoint.sh"

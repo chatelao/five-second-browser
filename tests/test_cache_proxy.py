@@ -63,9 +63,12 @@ def main() -> None:
         up_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         up_thread.start()
 
-        # 1. Start proxy online: verify first-run Wi-Fi setup screen, submit SSID+password, then seed cache
+        # 1. Start proxy online: verify first-run Wi-Fi setup screen, offline disc shortcut, submit SSID+password, then seed cache
         env = os.environ.copy()
         env["MOCK_MODE"] = "1"
+        env["MOCK_DISC_DRIVE"] = "bluray"
+        env["MOCK_DISC_MEDIA"] = "dvd"
+        env["MOCK_DISC_LABEL"] = "TEST_DVD"
         proc = subprocess.Popen(
             [sys.executable, proxy_script, "--state-dir", tmp_dir, "--port", str(proxy_port)],
             env=env,
@@ -77,6 +80,41 @@ def main() -> None:
                 setup_html = resp.read().decode("utf-8")
                 assert resp.getcode() == 200
                 assert "Connect to Wi-Fi" in setup_html
+                assert "Watch DVD / Blu-ray Offline" in setup_html
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/app?tab=disc") as resp:
+                disc_app = resp.read().decode("utf-8")
+                assert resp.getcode() == 200
+                assert "tab-btn-disc" in disc_app and "F3" in disc_app
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/disc/status") as resp:
+                disc_st = json.loads(resp.read().decode("utf-8"))
+                assert disc_st["drive_present"] is True
+                assert disc_st["supports_dvd"] is True
+                assert disc_st["supports_bluray"] is True
+                assert disc_st["media_type"] == "dvd"
+
+            play_req = urllib.request.Request(
+                f"http://127.0.0.1:{proxy_port}/__5s__/disc/play",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(play_req) as resp:
+                play_res = json.loads(resp.read().decode("utf-8"))
+                assert resp.getcode() == 200 and play_res["ok"] is True
+                assert play_res["status"]["playing"] is True
+
+            stop_req = urllib.request.Request(
+                f"http://127.0.0.1:{proxy_port}/__5s__/disc/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(stop_req) as resp:
+                stop_res = json.loads(resp.read().decode("utf-8"))
+                assert resp.getcode() == 200 and stop_res["ok"] is True
+                assert stop_res["status"]["playing"] is False
 
             wifi_req = urllib.request.Request(
                 f"http://127.0.0.1:{proxy_port}/__5s__/wifi-setup",

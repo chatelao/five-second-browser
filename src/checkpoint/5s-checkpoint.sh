@@ -32,7 +32,8 @@ mkdir -p "$STATE_DIR"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${BIN_DIR:-$SCRIPT_DIR}"
 
-# 1. Flush SQLite WAL & app state via proxy (<= 150ms)
+# 1. Stop any active disc playback and flush SQLite WAL & app state via proxy (<= 150ms)
+curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/disc/stop" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/snapshot" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 
 # 2. Capture 1024x600 RGB565 framebuffer (<= 40ms)

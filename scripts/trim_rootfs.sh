@@ -91,7 +91,7 @@ trim_rootfs() {
       "$rootfs/lib/firmware/intel/ibt"* 2>/dev/null || true
   fi
 
-  echo "   [trim] Pruning unused kernel modules (keeping Broadwell-U, AC-3165, USB3/SD/SATA, QEMU)..."
+  echo "   [trim] Pruning unused kernel modules (keeping Broadwell-U, AC-3165, USB3/SD/SATA/Optical/Audio, QEMU)..."
   local kver=""
   if [[ -d "$rootfs/lib/modules" ]]; then
     kver="$(find "$rootfs/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n 1 || true)"

@@ -48,10 +48,15 @@ cleanup_mounts() {
 }
 trap cleanup_mounts EXIT
 
-echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, seatd, xwayland, cage, chromium, and 5s-browser..."
+echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, seatd, xwayland, cage, chromium, mpv/disc libs, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium
+  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base seatd xwayland cage chromium \
+  mpv libdvdnav4 libdvdread8 libbluray2 libaacs0 libbdplus0 eject alsa-utils
+if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg || true
+  DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg || true
+fi
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
@@ -60,7 +65,7 @@ chroot "$ROOTFS" apt-get clean
 if ! chroot "$ROOTFS" id -u kiosk >/dev/null 2>&1; then
   chroot "$ROOTFS" useradd -r -m -d /home/kiosk -s /bin/sh kiosk
 fi
-for grp in video render input audio tty; do
+for grp in video render input audio tty cdrom; do
   if chroot "$ROOTFS" getent group "$grp" >/dev/null 2>&1; then
     chroot "$ROOTFS" usermod -aG "$grp" kiosk || true
   fi

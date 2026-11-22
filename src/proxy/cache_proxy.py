@@ -5,11 +5,20 @@ import os
 import queue
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _cand in (_HERE, os.path.abspath(os.path.join(_HERE, "..", "disc"))):
+    if os.path.isfile(os.path.join(_cand, "disc_manager.py")) and _cand not in sys.path:
+        sys.path.insert(0, _cand)
+        break
+
+from disc_manager import DiscManager  # noqa: E402
 
 DEFAULT_GMAIL_URL = "https://mail.google.com/mail/u/0/s/?v=or"
 DEFAULT_YT_URL = "https://www.youtube.com/feed/subscriptions"
@@ -38,6 +47,8 @@ class ProxyState:
         self.sse_clients: list[queue.Queue] = []
         self.watch_urls: list[str] = []
         self._init_db()
+        self.disc_manager = DiscManager(state_dir=self.state_dir)
+        self.disc_manager.start_monitor(self.broadcast_disc)
 
     def is_wifi_configured(self) -> bool:
         if os.environ.get("SKIP_WIFI_SETUP") == "1":
@@ -191,14 +202,20 @@ class ProxyState:
         finally:
             conn.close()
 
-    def broadcast_delta(self, payload: dict) -> None:
-        msg = f"event: delta\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
+    def broadcast_sse(self, event_name: str, payload: dict) -> None:
+        msg = f"event: {event_name}\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
         with self.lock:
             for q in list(self.sse_clients):
                 try:
                     q.put_nowait(msg)
                 except queue.Full:
                     pass
+
+    def broadcast_delta(self, payload: dict) -> None:
+        self.broadcast_sse("delta", payload)
+
+    def broadcast_disc(self, payload: dict) -> None:
+        self.broadcast_sse("disc", payload)
 
     def fetch_and_cache(self, url: str) -> bool:
         try:
@@ -257,6 +274,7 @@ def render_wifi_setup_html() -> bytes:
   label { display: block; font-size: 13px; margin-bottom: 6px; color: #cbd5e1; }
   input { width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 14px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: #fff; font-size: 14px; }
   button { width: 100%; padding: 11px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer; }
+  .btn-secondary { margin-top: 10px; background: #334155; font-size: 13px; padding: 9px; }
   #msg { margin-top: 12px; font-size: 13px; color: #fbbf24; min-height: 18px; }
 </style>
 </head>
@@ -271,9 +289,13 @@ def render_wifi_setup_html() -> bytes:
       <input id="password" name="password" type="password" placeholder="WPA2 passphrase">
       <button type="submit">Connect &amp; Start</button>
     </form>
+    <button id="btn-offline-disc" type="button" class="btn-secondary">Watch DVD / Blu-ray Offline</button>
     <div id="msg"></div>
   </div>
   <script>
+    document.getElementById("btn-offline-disc").addEventListener("click", function () {
+      window.location.href = "/app?tab=disc";
+    });
     document.getElementById("wifi-form").addEventListener("submit", async function (e) {
       e.preventDefault();
       const msg = document.getElementById("msg");
@@ -303,8 +325,8 @@ def render_wifi_setup_html() -> bytes:
     return html.encode("utf-8")
 
 
-def render_app_html(state: ProxyState) -> bytes:
-    if not state.is_wifi_configured():
+def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
+    if not state.is_wifi_configured() and requested_tab != "disc":
         return render_wifi_setup_html()
     gmail_html, yt_html = state.get_app_state()
     pill_text = "● Live" if state.online else "● Cached (Connecting...)"
@@ -323,6 +345,17 @@ def render_app_html(state: ProxyState) -> bytes:
   #viewport {{ position: relative; width: 100%; height: calc(100vh - 24px); }}
   .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; }}
   #pane-youtube {{ visibility: hidden; pointer-events: none; background: #0f0f0f; color: #f1f1f1; }}
+  #pane-disc {{ visibility: hidden; pointer-events: none; background: #0f172a; color: #f1f5f9; display: flex; align-items: center; justify-content: center; }}
+  .disc-card {{ width: 520px; background: #1e293b; border-radius: 10px; padding: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); }}
+  .disc-card h2 {{ margin: 0 0 8px 0; font-size: 20px; }}
+  .disc-meta {{ font-size: 13px; color: #94a3b8; margin-bottom: 16px; line-height: 1.5; }}
+  .disc-actions {{ display: flex; gap: 10px; margin-bottom: 14px; }}
+  .disc-btn {{ border: none; border-radius: 6px; padding: 10px 16px; font-size: 14px; font-weight: bold; cursor: pointer; color: #fff; background: #3b82f6; }}
+  .disc-btn:disabled {{ opacity: 0.45; cursor: not-allowed; }}
+  .disc-btn.stop {{ background: #dc2626; }}
+  .disc-btn.eject {{ background: #475569; }}
+  .disc-msg {{ font-size: 13px; color: #fbbf24; min-height: 18px; margin-bottom: 12px; }}
+  .disc-keys {{ font-size: 12px; color: #94a3b8; border-top: 1px solid #334155; padding-top: 10px; }}
 </style>
 </head>
 <body>
@@ -330,6 +363,7 @@ def render_app_html(state: ProxyState) -> bytes:
     <div class="tabs">
       <button id="tab-btn-gmail" class="tab-btn active">&#9993; Gmail (F1)</button>
       <button id="tab-btn-youtube" class="tab-btn">&#9654; YouTube (F2)</button>
+      <button id="tab-btn-disc" class="tab-btn">&#128191; Disc (F3)</button>
     </div>
     <div id="status-pill" style="color: {pill_color};">{pill_text}</div>
   </div>
@@ -339,6 +373,21 @@ def render_app_html(state: ProxyState) -> bytes:
     </div>
     <div id="pane-youtube" class="pane">
       <div id="youtube-feed">{yt_html}</div>
+    </div>
+    <div id="pane-disc" class="pane">
+      <div class="disc-card">
+        <h2 id="disc-title">Optical Drive</h2>
+        <div id="disc-caps" class="disc-meta">Checking built-in drive...</div>
+        <div class="disc-actions">
+          <button id="btn-disc-play" class="disc-btn" disabled>&#9654; Play Disc</button>
+          <button id="btn-disc-stop" class="disc-btn stop" disabled>&#9632; Stop</button>
+          <button id="btn-disc-eject" class="disc-btn eject" disabled>&#9167; Eject</button>
+        </div>
+        <div id="disc-msg" class="disc-msg"></div>
+        <div class="disc-keys">
+          <b>Controls while playing:</b> Space = Play/Pause &bull; &larr;/&rarr; = Seek &bull; &uarr;/&darr; = Volume &bull; j = Subtitles &bull; # = Audio &bull; Esc / q = Return to Browser
+        </div>
+      </div>
     </div>
   </div>
   <script>{state.ui_js}</script>
@@ -367,7 +416,14 @@ def make_handler(state: ProxyState):
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path == "/app":
-                self._send(200, "text/html; charset=utf-8", render_app_html(state), "HIT")
+                qs = urllib.parse.parse_qs(parsed.query)
+                tab = qs.get("tab", [""])[0]
+                self._send(200, "text/html; charset=utf-8", render_app_html(state, requested_tab=tab), "HIT")
+                return
+
+            if parsed.path == "/__5s__/disc/status":
+                payload = json.dumps(state.disc_manager.probe()).encode("utf-8")
+                self._send(200, "application/json", payload)
                 return
 
             if parsed.path == "/__5s__/status":
@@ -455,6 +511,36 @@ def make_handler(state: ProxyState):
                     json.dumps({"ok": ok, "error": None if ok else msg, "redirect": "/app"}).encode("utf-8"),
                 )
                 return
+            if self.path == "/__5s__/disc/play":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                disc_type = data.get("type")
+                ok, msg = state.disc_manager.play(disc_type)
+                code = 200 if ok else 400
+                self._send(
+                    code,
+                    "application/json",
+                    json.dumps({"ok": ok, "message": msg, "status": state.disc_manager.probe()}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/disc/stop":
+                ok, msg = state.disc_manager.stop()
+                self._send(
+                    200 if ok else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "message": msg, "status": state.disc_manager.probe()}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/disc/eject":
+                ok, msg = state.disc_manager.eject()
+                self._send(
+                    200 if ok else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "message": msg, "status": state.disc_manager.probe()}).encode("utf-8"),
+                )
+                return
             if self.path == "/__5s__/snapshot":
                 try:
                     data = json.loads(raw.decode("utf-8") or "{}")
@@ -471,6 +557,7 @@ def make_handler(state: ProxyState):
 def main():
     parser = argparse.ArgumentParser(description="5s-browser SQLite WAL cache proxy")
     parser.add_argument("--state-dir", default="/var/cache/5s")
+    parser.add_argument("--host", default=os.environ.get("PROXY_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=8555)
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
@@ -480,12 +567,14 @@ def main():
         ui_js = f.read()
 
     state = ProxyState(args.state_dir, online=not args.offline, ui_js=ui_js, port=args.port)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(state))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        state.disc_manager.stop_monitor()
+        state.disc_manager.stop()
         server.server_close()
 
 

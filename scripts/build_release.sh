@@ -29,10 +29,11 @@ Priority: optional
 Architecture: amd64
 Maintainer: five-second-browser <maintainers@example.com>
 Depends: python3, lz4, curl
-Recommends: seatd, xwayland, cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo
-Description: Five-second dual-tab Gmail & YouTube appliance for HP Pavilion 17-g111nz
+Recommends: seatd, xwayland, cage, chromium, iwd, dhcpcd-base, firmware-iwlwifi, i965-va-driver, vainfo, mpv, libdvdnav4, libdvdread8, libbluray2, libaacs0, libbdplus0, eject, alsa-utils
+Description: Five-second Gmail, YouTube & Optical Disc appliance for HP Pavilion 17-g111nz
  Boots directly into cached Gmail and YouTube on Intel Pentium 3825U (Broadwell-U,
- 4GB RAM, Gen8 VA-API, Intel Wireless-AC 3165) while syncing live deltas.
+ 4GB RAM, Gen8 VA-API, Intel Wireless-AC 3165) while syncing live deltas,
+ with built-in DVD and conditional Blu-ray playback.
 EOF
 
 cat > "$DEB_ROOT/DEBIAN/postinst" <<'EOF'
@@ -42,7 +43,9 @@ mkdir -p /var/cache/5s/net
 chmod 0755 /opt/5s-browser/bin/*
 if ! id -u kiosk >/dev/null 2>&1 && command -v useradd >/dev/null 2>&1; then
   useradd -r -m -d /home/kiosk -s /bin/sh kiosk || true
-  for grp in video render input audio tty; do
+fi
+if id -u kiosk >/dev/null 2>&1; then
+  for grp in video render input audio tty cdrom; do
     getent group "$grp" >/dev/null 2>&1 && usermod -aG "$grp" kiosk || true
   done
 fi
@@ -53,6 +56,8 @@ cp "$BUILD_BIN/5s-init" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-fb-splash" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/cache_proxy.py" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/injected_ui.js" "$DEB_ROOT/opt/5s-browser/bin/"
+cp "$BUILD_BIN/disc_manager.py" "$DEB_ROOT/opt/5s-browser/bin/"
+cp "$BUILD_BIN/5s-optical-init.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-net-fast.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-checkpoint.sh" "$DEB_ROOT/opt/5s-browser/bin/"
 cp "$BUILD_BIN/5s-browser-launch.sh" "$DEB_ROOT/opt/5s-browser/bin/"

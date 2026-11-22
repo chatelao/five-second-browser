@@ -21,13 +21,16 @@ build: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 	mkdir -p $(BUILD_DIR)/config
 	cp src/proxy/cache_proxy.py $(BIN_DIR)/cache_proxy.py
 	cp src/proxy/injected_ui.js $(BIN_DIR)/injected_ui.js
+	cp src/disc/disc_manager.py $(BIN_DIR)/disc_manager.py
+	cp src/disc/5s-optical-init.sh $(BIN_DIR)/5s-optical-init.sh
 	cp src/net/5s-net-fast.sh $(BIN_DIR)/5s-net-fast.sh
 	cp src/checkpoint/5s-checkpoint.sh $(BIN_DIR)/5s-checkpoint.sh
 	cp src/checkpoint/5s-browser-launch.sh $(BIN_DIR)/5s-browser-launch.sh
 	cp src/config/zram-setup.sh $(BIN_DIR)/zram-setup.sh
 	cp src/config/grub-5s.cfg $(BUILD_DIR)/config/grub-5s.cfg
 	chmod +x $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init \
-		$(BIN_DIR)/cache_proxy.py $(BIN_DIR)/5s-net-fast.sh \
+		$(BIN_DIR)/cache_proxy.py $(BIN_DIR)/disc_manager.py \
+		$(BIN_DIR)/5s-optical-init.sh $(BIN_DIR)/5s-net-fast.sh \
 		$(BIN_DIR)/5s-checkpoint.sh $(BIN_DIR)/5s-browser-launch.sh \
 		$(BIN_DIR)/zram-setup.sh
 
