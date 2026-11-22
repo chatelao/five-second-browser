@@ -18,11 +18,30 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <stdarg.h>
+
 static volatile sig_atomic_t g_shutdown_requested = 0;
 
 static void on_signal(int sig) {
     (void)sig;
     g_shutdown_requested = 1;
+}
+
+static void log_boot(const char *fmt, ...) {
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    fprintf(stderr, "%s\n", msg);
+    fflush(stderr);
+
+    int kfd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    if (kfd >= 0) {
+        dprintf(kfd, "<6>%s\n", msg);
+        close(kfd);
+    }
 }
 
 static void pin_cpus(int cpu_a, int cpu_b) {
@@ -83,6 +102,7 @@ static pid_t spawn_pinned(int cpu_a, int cpu_b, int niceness, const char *path, 
             }
         }
         execv(path, argv);
+        log_boot("5s-init: execv(%s) failed: %s", path, strerror(errno));
         _exit(127);
     }
     return pid;
@@ -217,12 +237,16 @@ int main(int argc, char **argv) {
     if (access(proxy_bin, X_OK) == 0) {
         char *proxy_argv[] = {proxy_bin, "--state-dir", state_arg, "--port", "8555", NULL};
         proxy_pid = spawn_pinned(1, 3, 0, proxy_bin, proxy_argv);
+        if (!test_mode) log_boot("5s-init: spawned cache_proxy.py (pid=%d)", (int)proxy_pid);
+    } else if (!test_mode) {
+        log_boot("5s-init: ERROR cache_proxy.py not executable at %s", proxy_bin);
     }
 
     pid_t net_pid = -1;
     if (access(net_bin, X_OK) == 0) {
         char *net_argv[] = {net_bin, "--boot", "--state-dir", state_arg, NULL};
         net_pid = spawn_pinned(1, 3, 10, net_bin, net_argv);
+        if (!test_mode) log_boot("5s-init: spawned 5s-net-fast.sh (pid=%d)", (int)net_pid);
     }
 
     /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
@@ -233,6 +257,9 @@ int main(int argc, char **argv) {
     if (access(browser_bin, X_OK) == 0) {
         char *browser_argv[] = {browser_bin, "--state-dir", state_arg, NULL};
         browser_pid = spawn_pinned(0, 2, -10, browser_bin, browser_argv);
+        if (!test_mode) log_boot("5s-init: spawned 5s-browser-launch.sh (pid=%d)", (int)browser_pid);
+    } else if (!test_mode) {
+        log_boot("5s-init: ERROR 5s-browser-launch.sh not executable at %s", browser_bin);
     }
 
     /* Supervisor loop until shutdown signal */
@@ -243,24 +270,19 @@ int main(int argc, char **argv) {
             if (exited == browser_pid) {
                 browser_pid = -1;
                 if (!test_mode) {
-                    int kfd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
-                    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-                        fprintf(stderr, "5s-init: browser exited with code %d\n", WEXITSTATUS(status));
-                        if (kfd >= 0) dprintf(kfd, "<3>5s-init: browser exited with code %d\n", WEXITSTATUS(status));
-                        if (kfd >= 0) close(kfd);
-                        sleep(10);
+                    if (WIFEXITED(status)) {
+                        log_boot("5s-init: browser exited with code %d", WEXITSTATUS(status));
                     } else if (WIFSIGNALED(status)) {
-                        fprintf(stderr, "5s-init: browser killed by signal %d\n", WTERMSIG(status));
-                        if (kfd >= 0) dprintf(kfd, "<3>5s-init: browser killed by signal %d\n", WTERMSIG(status));
-                        if (kfd >= 0) close(kfd);
-                        sleep(10);
-                    } else if (kfd >= 0) {
-                        close(kfd);
+                        log_boot("5s-init: browser killed by signal %d", WTERMSIG(status));
                     }
+                    sleep(15);
                     g_shutdown_requested = 1;
                 }
             } else if (exited == proxy_pid) {
                 proxy_pid = -1;
+                if (!test_mode) {
+                    log_boot("5s-init: cache_proxy.py exited (status=0x%x)", status);
+                }
             } else if (exited == net_pid) {
                 net_pid = -1;
             }
