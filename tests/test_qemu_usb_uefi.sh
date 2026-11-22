@@ -57,6 +57,7 @@ done
 WORK_DIR="$(mktemp -d /tmp/5s-qemu-usb-XXXXXX)"
 TEST_IMG="$WORK_DIR/usb-test.img"
 MNT_DIR="$WORK_DIR/mnt"
+SQFS_DIR="$WORK_DIR/sqfs"
 SERIAL_LOG="$WORK_DIR/serial.log"
 LOOP_DEV=""
 QEMU_PID=""
@@ -66,6 +67,7 @@ cleanup() {
     kill "$QEMU_PID" 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
   fi
+  umount "$SQFS_DIR" 2>/dev/null || true
   umount "$MNT_DIR/boot/efi" 2>/dev/null || true
   umount "$MNT_DIR" 2>/dev/null || true
   if [[ -n "$LOOP_DEV" ]]; then
@@ -78,7 +80,7 @@ trap cleanup EXIT
 echo "[usb-uefi] Decompressing $IMG_XZ to temporary test image..."
 xz -dc "$IMG_XZ" > "$TEST_IMG"
 
-mkdir -p "$MNT_DIR"
+mkdir -p "$MNT_DIR" "$SQFS_DIR"
 LOOP_DEV="$(losetup --find --show --partscan "$TEST_IMG")"
 EFI_PART="${LOOP_DEV}p1"
 ROOT_PART="${LOOP_DEV}p2"
@@ -99,13 +101,31 @@ mount "$EFI_PART" "$MNT_DIR/boot/efi"
 
 for required in \
   "$MNT_DIR/boot/efi/EFI/BOOT/BOOTX64.EFI" \
-  "$MNT_DIR/boot/grub/grub.cfg" \
-  "$MNT_DIR/opt/5s-browser/bin/5s-init"; do
+  "$MNT_DIR/boot/grub/grub.cfg"; do
   if [[ ! -e "$required" ]]; then
     echo "ERROR: Missing $required in USB/SD image" >&2
     exit 1
   fi
 done
+
+if [[ -f "$MNT_DIR/rootfs.squashfs" ]]; then
+  mount -o loop,ro "$MNT_DIR/rootfs.squashfs" "$SQFS_DIR"
+  if [[ ! -e "$SQFS_DIR/opt/5s-browser/bin/5s-init" ]]; then
+    echo "ERROR: Missing /opt/5s-browser/bin/5s-init in rootfs.squashfs" >&2
+    exit 1
+  fi
+  mkdir -p "$MNT_DIR/overlay/upper/opt/5s-browser/bin"
+  cp -a "$SQFS_DIR/opt/5s-browser/bin/5s-browser-launch.sh" \
+    "$MNT_DIR/overlay/upper/opt/5s-browser/bin/5s-browser-launch.sh"
+  LAUNCH_SCRIPT="$MNT_DIR/overlay/upper/opt/5s-browser/bin/5s-browser-launch.sh"
+  umount "$SQFS_DIR"
+else
+  if [[ ! -e "$MNT_DIR/opt/5s-browser/bin/5s-init" ]]; then
+    echo "ERROR: Missing $MNT_DIR/opt/5s-browser/bin/5s-init in USB/SD image" >&2
+    exit 1
+  fi
+  LAUNCH_SCRIPT="$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
+fi
 
 if ! grep -q "init=/opt/5s-browser/bin/5s-init" "$MNT_DIR/boot/grub/grub.cfg"; then
   echo "ERROR: grub.cfg missing init=/opt/5s-browser/bin/5s-init" >&2
@@ -118,7 +138,7 @@ fi
 
 # Enable serial console logging and software renderer fallback ONLY on the temporary test image copy
 sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
-sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1' "$MNT_DIR/opt/5s-browser/bin/5s-browser-launch.sh"
+sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1' "$LAUNCH_SCRIPT"
 sync
 
 umount "$MNT_DIR/boot/efi"

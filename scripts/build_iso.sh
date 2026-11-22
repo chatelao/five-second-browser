@@ -18,12 +18,17 @@ fi
 rm -rf "$WORK_DIR"
 mkdir -p "$ROOTFS" "$ISO_DIR/live" "$ISO_DIR/boot/grub"
 
+# shellcheck source=scripts/trim_rootfs.sh
+source "$ROOT_DIR/scripts/trim_rootfs.sh"
+
 echo "1. Bootstrapping minimal Debian 12 (bookworm) amd64 rootfs..."
 debootstrap \
   --arch=amd64 \
   --variant=minbase \
   --include=linux-image-amd64,live-boot,systemd-sysv,grub-pc,grub-pc-bin,grub-efi-amd64-bin,dosfstools,parted,e2fsprogs,squashfs-tools,kmod,udev,python3,lz4,curl,ca-certificates \
   bookworm "$ROOTFS" http://deb.debian.org/debian
+
+configure_dpkg_filters "$ROOTFS"
 
 cat > "$ROOTFS/etc/apt/sources.list" <<'EOF'
 deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
@@ -46,7 +51,7 @@ trap cleanup_mounts EXIT
 echo "2. Installing Intel AC-3165 Wi-Fi firmware, Gen8 VA-API driver, iwd, cage, chromium, and 5s-browser..."
 chroot "$ROOTFS" apt-get update
 DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends \
-  firmware-iwlwifi firmware-brcm80211 wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base cage chromium
+  firmware-iwlwifi wireless-regdb iproute2 i965-va-driver iwd dhcpcd-base cage chromium
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"
 chroot "$ROOTFS" dpkg -i /tmp/5s-browser.deb
 rm -f "$ROOTFS/tmp/5s-browser.deb" "$ROOTFS/usr/sbin/policy-rc.d"
@@ -85,6 +90,12 @@ mkdir -p "$ROOTFS/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/5s-autoinstall.service \
   "$ROOTFS/etc/systemd/system/multi-user.target.wants/5s-autoinstall.service"
 
+trim_rootfs "$ROOTFS"
+
+if [[ -f "$ROOTFS/etc/initramfs-tools/initramfs.conf" ]]; then
+  sed -i 's/^COMPRESS=.*/COMPRESS=lz4/' "$ROOTFS/etc/initramfs-tools/initramfs.conf"
+fi
+
 if [[ -f "$ROOTFS/usr/share/initramfs-tools/scripts/init-top/udev" ]]; then
   mkdir -p "$ROOTFS/etc/initramfs-tools/scripts/init-top" "$ROOTFS/etc/initramfs-tools/conf.d"
   cat > "$ROOTFS/etc/initramfs-tools/conf.d/5s-fastboot.conf" <<'EOF'
@@ -102,7 +113,7 @@ fi
 cleanup_mounts
 trap - EXIT
 
-echo "3. Extracting kernel/initrd and building LZ4 SquashFS..."
+echo "3. Extracting kernel/initrd and building SquashFS..."
 VMLINUZ="$(find "$ROOTFS/boot" -maxdepth 1 -name 'vmlinuz-*' | sort | tail -n 1)"
 INITRD="$(find "$ROOTFS/boot" -maxdepth 1 -name 'initrd.img-*' | sort | tail -n 1)"
 cp "$VMLINUZ" "$ISO_DIR/live/vmlinuz"
