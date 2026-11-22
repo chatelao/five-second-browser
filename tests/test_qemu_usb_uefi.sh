@@ -138,6 +138,7 @@ fi
 
 # Enable serial console logging and software renderer fallback ONLY on the temporary test image copy
 sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
+# shellcheck disable=SC2016
 sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1\nmodprobe i915 2>&1 | while IFS= read -r line; do log_msg "modprobe i915: $line"; done || true' "$LAUNCH_SCRIPT"
 sync
 
