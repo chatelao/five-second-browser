@@ -165,7 +165,7 @@ mount -n -o move /run/5s-backing "${rootmnt}/mnt/5s-backing" || true
 EOF
 chmod +x "$STAGE_ROOTFS/etc/initramfs-tools/scripts/local-bottom/5s-overlay"
 
-for mod in i915 xhci_pci xhci_hcd ehci_pci ehci_hcd usb_storage uas sd_mod scsi_mod rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci ext4 crc32c_generic jbd2 mbcache hid usbhid hid_generic atkbd i8042 loop squashfs overlay zstd_decompress lz4_decompress; do
+for mod in cec drm drm_kms_helper drm_display_helper drm_buddy ttm video i2c_algo_bit intel_gtt i915 xhci_pci xhci_hcd ehci_pci ehci_hcd usb_storage uas sd_mod scsi_mod rtsx_pci rtsx_pci_sdmmc mmc_block sdhci sdhci_pci ext4 crc32c_generic jbd2 mbcache hid usbhid hid_generic atkbd i8042 loop squashfs overlay zstd_decompress lz4_decompress; do
   if ! grep -qx "$mod" "$STAGE_ROOTFS/etc/initramfs-tools/modules" 2>/dev/null; then
     echo "$mod" >> "$STAGE_ROOTFS/etc/initramfs-tools/modules"
   fi

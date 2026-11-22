@@ -138,7 +138,7 @@ fi
 
 # Enable serial console logging and software renderer fallback ONLY on the temporary test image copy
 sed -i -E 's/(quiet )?loglevel=[0-7]/loglevel=7 console=ttyS0,115200/g' "$MNT_DIR/boot/grub/grub.cfg"
-sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1' "$LAUNCH_SCRIPT"
+sed -i '/export LIBSEAT_BACKEND=/a export WLR_RENDERER=pixman\nexport WLR_RENDERER_ALLOW_SOFTWARE=1\nmodprobe i915 2>&1 | while IFS= read -r line; do log_msg "modprobe i915: $line"; done || true' "$LAUNCH_SCRIPT"
 sync
 
 umount "$MNT_DIR/boot/efi"
@@ -182,8 +182,8 @@ while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     break
   fi
-  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend" "$SERIAL_LOG" 2>/dev/null; then
-    echo "ERROR: Fatal kernel/PID 1/browser failure detected during USB UEFI boot:" >&2
+  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unknown symbol in module" "$SERIAL_LOG" 2>/dev/null; then
+    echo "ERROR: Fatal kernel/PID 1/browser/module failure detected during USB UEFI boot:" >&2
     tail -n 60 "$SERIAL_LOG" >&2 || true
     exit 1
   fi
@@ -196,8 +196,8 @@ while (( SECONDS < DEADLINE )); do
   if [[ "$VERIFIED_BROWSER" == "0" ]] && grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
     STARTED_BROWSER=1
     sleep 4
-    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend" "$SERIAL_LOG" 2>/dev/null; then
-      echo "ERROR: Fatal browser/wlroots failure detected after launch:" >&2
+    if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend|Unknown symbol in module" "$SERIAL_LOG" 2>/dev/null; then
+      echo "ERROR: Fatal browser/wlroots/module failure detected after launch:" >&2
       tail -n 60 "$SERIAL_LOG" >&2 || true
       exit 1
     fi
