@@ -176,12 +176,13 @@ DEADLINE=$((SECONDS + 90))
 BOOTED_KERNEL=0
 RAN_ZRAM_INIT=0
 STARTED_BROWSER=0
+VERIFIED_BROWSER=0
 
 while (( SECONDS < DEADLINE )); do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     break
   fi
-  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)" "$SERIAL_LOG" 2>/dev/null; then
+  if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend" "$SERIAL_LOG" 2>/dev/null; then
     echo "ERROR: Fatal kernel/PID 1/browser failure detected during USB UEFI boot:" >&2
     tail -n 60 "$SERIAL_LOG" >&2 || true
     exit 1
@@ -192,7 +193,7 @@ while (( SECONDS < DEADLINE )); do
   if grep -qE "zram0: (detected capacity change|configured)|Adding .* swap on /dev/zram0" "$SERIAL_LOG" 2>/dev/null; then
     RAN_ZRAM_INIT=1
   fi
-  if grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
+  if [[ "$VERIFIED_BROWSER" == "0" ]] && grep -q "5s-browser: starting Cage + Chromium" "$SERIAL_LOG" 2>/dev/null; then
     STARTED_BROWSER=1
     sleep 4
     if grep -qE "Kernel panic|Invalid opcode|Attempted to kill init|XDG_RUNTIME_DIR is not set|5s-init: browser (exited|killed)|Unable to create the wlroots backend" "$SERIAL_LOG" 2>/dev/null; then
@@ -200,6 +201,12 @@ while (( SECONDS < DEADLINE )); do
       tail -n 60 "$SERIAL_LOG" >&2 || true
       exit 1
     fi
+    VERIFIED_BROWSER=1
+    if grep -qE "zram0: (detected capacity change|configured)|Adding .* swap on /dev/zram0" "$SERIAL_LOG" 2>/dev/null; then
+      RAN_ZRAM_INIT=1
+    fi
+  fi
+  if [[ "$BOOTED_KERNEL" == "1" && "$RAN_ZRAM_INIT" == "1" && "$VERIFIED_BROWSER" == "1" ]]; then
     break
   fi
   sleep 1

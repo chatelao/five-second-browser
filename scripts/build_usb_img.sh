@@ -143,6 +143,7 @@ modprobe overlay 2>/dev/null || true
 
 mkdir -p /run/5s-backing /run/5s-ro
 mount -n -o move "${rootmnt}" /run/5s-backing
+mount -n -o remount,rw,noatime /run/5s-backing 2>/dev/null || mount -n -o remount,rw /run/5s-backing
 
 if ! mount -n -t squashfs -o loop,ro /run/5s-backing/rootfs.squashfs /run/5s-ro; then
   mount -n -o move /run/5s-backing "${rootmnt}"
