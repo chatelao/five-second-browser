@@ -64,10 +64,13 @@ if [[ "${ENABLE_LIBDVDCSS:-0}" == "1" ]]; then
   chroot "$ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/post-invoke_hook-install boolean false" | debconf-set-selections'
   DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg
   DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg
-  chroot "$ROOTFS" apt-mark manual libdvdcss2
+  mkdir -p "$ROOTFS/tmp/libdvdcss-keep"
+  cp -a "$ROOTFS"/usr/lib/x86_64-linux-gnu/libdvdcss.so.2* "$ROOTFS/tmp/libdvdcss-keep/"
   DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get purge -y libdvd-pkg
   DEBIAN_FRONTEND=noninteractive chroot "$ROOTFS" apt-get autoremove -y --purge
-  rm -rf "$ROOTFS/usr/src/libdvd-pkg"
+  cp -a "$ROOTFS"/tmp/libdvdcss-keep/libdvdcss.so.2* "$ROOTFS/usr/lib/x86_64-linux-gnu/"
+  rm -rf "$ROOTFS/tmp/libdvdcss-keep" "$ROOTFS/usr/src/libdvd-pkg"
+  chroot "$ROOTFS" ldconfig
   test -f "$ROOTFS/usr/lib/x86_64-linux-gnu/libdvdcss.so.2"
 fi
 cp "$DEB_FILE" "$ROOTFS/tmp/5s-browser.deb"

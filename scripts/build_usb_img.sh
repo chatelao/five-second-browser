@@ -86,10 +86,13 @@ EOF
     chroot "$STAGE_ROOTFS" sh -c 'echo "libdvd-pkg libdvd-pkg/post-invoke_hook-install boolean false" | debconf-set-selections'
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get install -y --no-install-recommends libdvd-pkg
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" dpkg-reconfigure -f noninteractive libdvd-pkg
-    chroot "$STAGE_ROOTFS" apt-mark manual libdvdcss2
+    mkdir -p "$STAGE_ROOTFS/tmp/libdvdcss-keep"
+    cp -a "$STAGE_ROOTFS"/usr/lib/x86_64-linux-gnu/libdvdcss.so.2* "$STAGE_ROOTFS/tmp/libdvdcss-keep/"
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get purge -y libdvd-pkg
     DEBIAN_FRONTEND=noninteractive chroot "$STAGE_ROOTFS" apt-get autoremove -y --purge
-    rm -rf "$STAGE_ROOTFS/usr/src/libdvd-pkg"
+    cp -a "$STAGE_ROOTFS"/tmp/libdvdcss-keep/libdvdcss.so.2* "$STAGE_ROOTFS/usr/lib/x86_64-linux-gnu/"
+    rm -rf "$STAGE_ROOTFS/tmp/libdvdcss-keep" "$STAGE_ROOTFS/usr/src/libdvd-pkg"
+    chroot "$STAGE_ROOTFS" ldconfig
     test -f "$STAGE_ROOTFS/usr/lib/x86_64-linux-gnu/libdvdcss.so.2"
   fi
   cp "$DEB_FILE" "$STAGE_ROOTFS/tmp/5s-browser.deb"
