@@ -32,7 +32,7 @@
         "http://127.0.0.1:8555/diag*"
       ],
       "js": ["topbar.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

@@ -1056,10 +1056,10 @@ def render_wifi_setup_html(features: dict[str, bool] | None = None) -> bytes:
 
 def format_wifi_status(ssid: str, signal_percent: int | None) -> str:
     if ssid and signal_percent is not None:
-        return f"\U0001f4f6 {ssid} ({signal_percent}%)"
+        return f"{ssid} ({signal_percent}%)"
     if ssid:
-        return f"\U0001f4f6 {ssid}"
-    return "\U0001f4f6 No Wi-Fi"
+        return f"{ssid}"
+    return "No Wi-Fi"
 
 
 def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
@@ -1087,16 +1087,21 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
         else (wifi["ssid"] or "Wi-Fi Network & Signal")
     )
 
+    svg_gmail = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="10" rx="1.5"/><path d="M2 4l6 4.5L14 4"/></svg>'
+    svg_yt = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 3.8v8.4L12.5 8l-7-4.2z"/></svg>'
+    svg_disc = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/></svg>'
+    svg_wifi = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.2 6.2a8.5 8.5 0 0 1 11.6 0"/><path d="M4.6 8.9a5.2 5.2 0 0 1 6.8 0"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/></svg>'
+
     tab_buttons = []
     if features["gmail"]:
         cls = "tab-btn active" if active_tab == "gmail" else "tab-btn"
-        tab_buttons.append(f'<button id="tab-btn-gmail" class="{cls}">&#9993; Gmail (F1)</button>')
+        tab_buttons.append(f'<button id="tab-btn-gmail" class="{cls}">{svg_gmail}<span>Gmail</span><kbd>F1</kbd></button>')
     if features["youtube"]:
         cls = "tab-btn active" if active_tab == "youtube" else "tab-btn"
-        tab_buttons.append(f'<button id="tab-btn-youtube" class="{cls}">&#9654; YouTube (F2)</button>')
+        tab_buttons.append(f'<button id="tab-btn-youtube" class="{cls}">{svg_yt}<span>YouTube</span><kbd>F2</kbd></button>')
     if features["disc"]:
         cls = "tab-btn active" if active_tab == "disc" else "tab-btn"
-        tab_buttons.append(f'<button id="tab-btn-disc" class="{cls}">&#128191; Disc (F3)</button>')
+        tab_buttons.append(f'<button id="tab-btn-disc" class="{cls}">{svg_disc}<span>Disc</span><span id="disc-tab-dot" class="disc-dot" hidden></span><kbd>F3</kbd></button>')
     tabs_html = "\n      ".join(tab_buttons)
 
     panes = []
@@ -1139,16 +1144,24 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
 <meta charset="utf-8">
 <title>5s-browser</title>
 <style>
-  html, body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: sans-serif; background: #111; color: #eee; }}
-  #topbar {{ height: 24px; background: #1e293b; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font-size: 12px; }}
-  .tabs {{ display: flex; gap: 6px; }}
-  .tab-btn {{ background: #334155; color: #e2e8f0; border: none; height: 20px; padding: 0 10px; cursor: pointer; font-size: 12px; }}
-  .tab-btn.active {{ background: #3b82f6; color: #fff; font-weight: bold; }}
-  .topbar-right {{ display: flex; align-items: center; gap: 12px; font-size: 12px; }}
-  #wifi-status {{ color: #94a3b8; white-space: nowrap; }}
+  html, body {{ margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: #111; color: #eee; }}
+  #topbar {{ height: 34px; background: #0f172a; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; box-sizing: border-box; font-size: 12px; user-select: none; }}
+  .tabs {{ display: flex; align-items: center; gap: 6px; }}
+  .tab-btn {{ display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px; background: rgba(255, 255, 255, 0.06); color: #cbd5e1; font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; outline: none; }}
+  .tab-btn:hover {{ background: rgba(255, 255, 255, 0.12); color: #f8fafc; }}
+  .tab-btn.active {{ background: #2563eb; border-color: rgba(255, 255, 255, 0.15); color: #ffffff; font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }}
+  .tab-btn svg, #wifi-status svg {{ width: 14px; height: 14px; flex-shrink: 0; display: block; }}
+  .tab-btn kbd {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.12); color: inherit; opacity: 0.85; }}
+  .disc-dot {{ width: 6px; height: 6px; border-radius: 50%; background: #4ade80; display: inline-block; }}
+  .disc-dot[hidden] {{ display: none; }}
+  .topbar-right {{ display: flex; align-items: center; gap: 10px; font-size: 11px; }}
+  #wifi-status {{ display: inline-flex; align-items: center; gap: 5px; color: #94a3b8; white-space: nowrap; }}
   #topbar-clock {{ color: #e2e8f0; font-variant-numeric: tabular-nums; white-space: nowrap; }}
-  #status-pill {{ white-space: nowrap; }}
-  #viewport {{ position: relative; width: 100%; height: calc(100vh - 24px); }}
+  .diag-link-btn {{ display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.1); background: transparent; color: #94a3b8; font-family: inherit; font-size: 11px; text-decoration: none; cursor: pointer; }}
+  .diag-link-btn:hover {{ background: rgba(255, 255, 255, 0.08); color: #e2e8f0; }}
+  .diag-link-btn kbd {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1; padding: 1px 4px; border-radius: 3px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.12); color: inherit; }}
+  #status-pill {{ font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap; }}
+  #viewport {{ position: relative; width: 100%; height: calc(100vh - 34px); }}
   .pane {{ position: absolute; inset: 0; overflow-y: auto; padding: 12px; background: #fff; color: #111; visibility: hidden; pointer-events: none; }}
   .pane.active {{ visibility: visible; pointer-events: auto; }}
   #pane-youtube {{ background: #0f0f0f; color: #f1f1f1; }}
@@ -1171,8 +1184,9 @@ def render_app_html(state: ProxyState, requested_tab: str = "") -> bytes:
       {tabs_html}
     </div>
     <div class="topbar-right">
-      <div id="wifi-status" title="{wifi_title}">{wifi_text}</div>
+      <div id="wifi-status" title="{wifi_title}">{svg_wifi}<span id="wifi-status-text">{wifi_text}</span></div>
       <div id="topbar-clock" title="Local Time">--:--</div>
+      <a class="diag-link-btn" href="/diag"><span>Diag</span><kbd>F12</kbd></a>
       <div id="status-pill" style="color: {pill_color};">{pill_text}</div>
     </div>
   </div>

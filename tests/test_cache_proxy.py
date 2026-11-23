@@ -92,6 +92,8 @@ def main() -> None:
                 disc_app = resp.read().decode("utf-8")
                 assert resp.getcode() == 200
                 assert "tab-btn-disc" in disc_app and "F3" in disc_app
+                assert "&#128191;" not in disc_app
+                assert "<svg " in disc_app and "disc-tab-dot" in disc_app
 
             with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/disc/status") as resp:
                 disc_st = json.loads(resp.read().decode("utf-8"))
