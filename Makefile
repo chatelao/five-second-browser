@@ -31,6 +31,7 @@ build: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 	cp src/config/5s-usb-log.sh $(BIN_DIR)/5s-usb-log.sh
 	cp src/config/grub-5s.cfg $(BUILD_DIR)/config/grub-5s.cfg
 	cp src/config/asound-5s.conf $(BUILD_DIR)/config/asound-5s.conf
+	cp src/config/chromium-policy.json $(BUILD_DIR)/config/chromium-policy.json
 	cp src/ext/* $(BUILD_DIR)/ext/
 	chmod +x $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init \
 		$(BIN_DIR)/cache_proxy.py $(BIN_DIR)/disc_manager.py \

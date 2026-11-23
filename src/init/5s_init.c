@@ -1,9 +1,14 @@
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
+#include <linux/input.h>
+#include <linux/watchdog.h>
 #include <net/if.h>
+#include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
@@ -269,6 +274,130 @@ static pid_t spawn_debug_tty2(void) {
     return pid;
 }
 
+static int file_contains_ci(const char *path, const char *needle) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+    return strcasestr(buf, needle) != NULL;
+}
+
+static int is_debug_tty_enabled(const char *state_dir) {
+    if (file_contains_ci("/proc/cmdline", "5s.debug=1")) return 1;
+    char path[PATH_MAX + 32];
+    snprintf(path, sizeof(path), "%.4000s/wifi.txt", state_dir);
+    if (file_contains_ci(path, "DEBUG_TTY=true") || file_contains_ci(path, "DEBUG_TTY=1")) return 1;
+    if (file_contains_ci("/boot/efi/wifi.txt", "DEBUG_TTY=true") ||
+        file_contains_ci("/boot/efi/wifi.txt", "DEBUG_TTY=1")) return 1;
+    return 0;
+}
+
+static int open_hardware_watchdog(void) {
+    int fd = open("/dev/watchdog", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    int timeout = 60;
+    (void)ioctl(fd, WDIOC_SETTIMEOUT, &timeout);
+    (void)ioctl(fd, WDIOC_KEEPALIVE, 0);
+    return fd;
+}
+
+static int read_int_file(const char *path, int *out) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    char buf[64];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+    char *end = NULL;
+    long val = strtol(buf, &end, 10);
+    if (end == buf) return -1;
+    *out = (int)val;
+    return 0;
+}
+
+static int check_battery_critical(void) {
+    DIR *dir = opendir("/sys/class/power_supply");
+    if (!dir) return 0;
+    struct dirent *ent;
+    int critical = 0;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strncmp(ent->d_name, "BAT", 3) != 0) continue;
+        char status_path[PATH_MAX];
+        char cap_path[PATH_MAX];
+        snprintf(status_path, sizeof(status_path), "/sys/class/power_supply/%s/status", ent->d_name);
+        snprintf(cap_path, sizeof(cap_path), "/sys/class/power_supply/%s/capacity", ent->d_name);
+        if (!file_contains_ci(status_path, "Discharging")) continue;
+        int cap = 100;
+        if (read_int_file(cap_path, &cap) == 0 && cap <= 5) {
+            critical = 1;
+            break;
+        }
+    }
+    closedir(dir);
+    return critical;
+}
+
+#define BIT_WORD(nr) ((nr) / (sizeof(unsigned long) * 8))
+#define BIT_MASK(nr) (1UL << ((nr) % (sizeof(unsigned long) * 8)))
+
+static int has_power_key(int fd) {
+    unsigned long evbits[2] = {0};
+    unsigned long keybits[(KEY_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
+    if (ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits) < 0) return 0;
+    if (!(evbits[BIT_WORD(EV_KEY)] & BIT_MASK(EV_KEY))) return 0;
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits) < 0) return 0;
+    return (keybits[BIT_WORD(KEY_POWER)] & BIT_MASK(KEY_POWER)) != 0;
+}
+
+static void *power_button_thread(void *arg) {
+    (void)arg;
+    struct pollfd fds[16];
+    nfds_t nfds = 0;
+    DIR *dir = opendir("/dev/input");
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL && nfds < 16) {
+            if (strncmp(ent->d_name, "event", 5) != 0) continue;
+            char path[PATH_MAX];
+            snprintf(path, sizeof(path), "/dev/input/%s", ent->d_name);
+            int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd >= 0) {
+                if (has_power_key(fd)) {
+                    fds[nfds].fd = fd;
+                    fds[nfds].events = POLLIN;
+                    nfds++;
+                } else {
+                    close(fd);
+                }
+            }
+        }
+        closedir(dir);
+    }
+    if (nfds == 0) return NULL;
+    while (!g_shutdown_requested) {
+        int rc = poll(fds, nfds, 1000);
+        if (rc > 0) {
+            for (nfds_t i = 0; i < nfds; i++) {
+                if (fds[i].revents & POLLIN) {
+                    struct input_event ev;
+                    while (read(fds[i].fd, &ev, sizeof(ev)) == (ssize_t)sizeof(ev)) {
+                        if (ev.type == EV_KEY && ev.code == KEY_POWER && ev.value == 1) {
+                            log_boot("5s-init: KEY_POWER pressed, initiating clean shutdown");
+                            g_shutdown_requested = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (nfds_t i = 0; i < nfds; i++) close(fds[i].fd);
+    return NULL;
+}
+
 int main(int argc, char **argv) {
     const char *state_dir = getenv("STATE_DIR");
     if (!state_dir || state_dir[0] == '\0') {
@@ -337,9 +466,37 @@ int main(int argc, char **argv) {
 
     /* Step 1: Immediate Visual Restore (t = 0 ms) */
     char splash_bin[PATH_MAX + 64];
-    char frame_path[PATH_MAX + 64];
-    snprintf(splash_bin, sizeof(splash_bin), "%s/5s-fb-splash", bin_dir);
-    snprintf(frame_path, sizeof(frame_path), "%s/last_frame.fb", state_dir);
+    char frame_path[PATH_MAX + 128];
+    char active_prof_path[PATH_MAX + 64];
+    snprintf(splash_bin, sizeof(splash_bin), "%.4000s/5s-fb-splash", bin_dir);
+    snprintf(active_prof_path, sizeof(active_prof_path), "%.4000s/active_profile", state_dir);
+    frame_path[0] = '\0';
+    {
+        int apfd = open(active_prof_path, O_RDONLY | O_CLOEXEC);
+        if (apfd >= 0) {
+            char prof_id[64] = {0};
+            ssize_t pn = read(apfd, prof_id, sizeof(prof_id) - 1);
+            close(apfd);
+            if (pn > 0) {
+                for (ssize_t k = 0; k < pn; k++) {
+                    if (prof_id[k] == '\n' || prof_id[k] == '\r' || prof_id[k] == ' ') {
+                        prof_id[k] = '\0';
+                        break;
+                    }
+                }
+                if (prof_id[0] != '\0') {
+                    char cand[PATH_MAX + 128];
+                    snprintf(cand, sizeof(cand), "%.4000s/last_frame_%.63s.fb", state_dir, prof_id);
+                    if (access(cand, R_OK) == 0) {
+                        snprintf(frame_path, sizeof(frame_path), "%.4200s", cand);
+                    }
+                }
+            }
+        }
+    }
+    if (frame_path[0] == '\0') {
+        snprintf(frame_path, sizeof(frame_path), "%.4000s/last_frame.fb", state_dir);
+    }
 
     if (access(frame_path, R_OK) == 0 && access(splash_bin, X_OK) == 0) {
         char *splash_argv[] = {splash_bin, "--restore", frame_path, NULL};
@@ -402,9 +559,22 @@ int main(int argc, char **argv) {
 
     pid_t udev_pid = -1;
     pid_t tty2_pid = -1;
+    int wdt_fd = -1;
+    pthread_t pwr_tid;
+    int pwr_tid_started = 0;
     if (getpid() == 1 && !test_mode) {
         udev_pid = spawn_udev_trigger_async();
-        tty2_pid = spawn_debug_tty2();
+        if (is_debug_tty_enabled(state_dir)) {
+            tty2_pid = spawn_debug_tty2();
+            log_boot("5s-init: debug tty2 enabled (pid=%d)", (int)tty2_pid);
+        }
+        wdt_fd = open_hardware_watchdog();
+        if (wdt_fd >= 0) {
+            log_boot("5s-init: hardware watchdog armed (60s timeout)");
+        }
+        if (pthread_create(&pwr_tid, NULL, power_button_thread, NULL) == 0) {
+            pwr_tid_started = 1;
+        }
     }
 
     /* Step 3: Track A on Physical Core 0 (CPUs 0, 2) */
@@ -421,6 +591,13 @@ int main(int argc, char **argv) {
     }
 
     /* Supervisor loop until shutdown signal */
+    struct timespec last_wdt_ping = g_boot_ts;
+    struct timespec last_bat_check = g_boot_ts;
+    int browser_restarts = 0;
+    time_t browser_window_start = g_boot_ts.tv_sec;
+    int proxy_restarts = 0;
+    time_t proxy_window_start = g_boot_ts.tv_sec;
+
     while (!g_shutdown_requested) {
         int status = 0;
         pid_t exited = waitpid(-1, &status, WNOHANG);
@@ -428,25 +605,35 @@ int main(int argc, char **argv) {
             if (exited == browser_pid) {
                 browser_pid = -1;
                 if (!test_mode) {
-                    if (WIFEXITED(status)) {
-                        int rc = WEXITSTATUS(status);
-                        log_boot("5s-init: browser exited with code %d", rc);
+                    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                    int sig = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+                    if (WIFEXITED(status) && rc == 0) {
+                        log_boot("5s-init: browser exited cleanly (code 0), shutting down");
+                        g_shutdown_requested = 1;
+                    } else {
+                        log_boot("5s-init: browser exited unexpectedly (rc=%d, sig=%d)", rc, sig);
                         if (access(usb_log_bin, X_OK) == 0) {
                             char *sync_argv[] = {usb_log_bin, "--sync", NULL};
                             (void)run_sync_cmd(usb_log_bin, sync_argv);
                         }
-                        if (rc == 0) {
-                            sleep(15);
-                            g_shutdown_requested = 1;
+                        struct timespec now = {0, 0};
+                        clock_gettime(CLOCK_MONOTONIC, &now);
+                        if (now.tv_sec - browser_window_start > 120) {
+                            browser_window_start = now.tv_sec;
+                            browser_restarts = 0;
+                        }
+                        if (browser_restarts < 5 && access(browser_bin, X_OK) == 0) {
+                            static const int delays_ms[] = {200, 1000, 2000, 5000, 10000};
+                            int d = delays_ms[browser_restarts];
+                            browser_restarts++;
+                            log_boot("5s-init: restarting browser (%d/5) in %dms", browser_restarts, d);
+                            usleep((useconds_t)d * 1000U);
+                            if (!g_shutdown_requested) {
+                                char *browser_argv[] = {browser_bin, "--state-dir", state_arg, NULL};
+                                browser_pid = spawn_pinned(0, 2, -10, browser_bin, browser_argv);
+                            }
                         } else {
-                            log_boot("5s-init: browser failed; press Alt+F2 for shell or power button to shut down.");
-                        }
-                    } else if (WIFSIGNALED(status)) {
-                        log_boot("5s-init: browser killed by signal %d", WTERMSIG(status));
-                        log_boot("5s-init: press Alt+F2 for shell or power button to shut down.");
-                        if (access(usb_log_bin, X_OK) == 0) {
-                            char *sync_argv[] = {usb_log_bin, "--sync", NULL};
-                            (void)run_sync_cmd(usb_log_bin, sync_argv);
+                            log_boot("5s-init: browser restart limit reached; press power button to shut down.");
                         }
                     }
                 }
@@ -454,6 +641,23 @@ int main(int argc, char **argv) {
                 proxy_pid = -1;
                 if (!test_mode) {
                     log_boot("5s-init: cache_proxy.py exited (status=0x%x)", status);
+                }
+                struct timespec now = {0, 0};
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                if (now.tv_sec - proxy_window_start > 120) {
+                    proxy_window_start = now.tv_sec;
+                    proxy_restarts = 0;
+                }
+                if (!g_shutdown_requested && proxy_restarts < 5 && access(proxy_bin, X_OK) == 0) {
+                    static const int p_delays_ms[] = {100, 500, 1000, 2000, 5000};
+                    int d = p_delays_ms[proxy_restarts];
+                    proxy_restarts++;
+                    if (!test_mode) log_boot("5s-init: restarting cache_proxy.py (%d/5) in %dms", proxy_restarts, d);
+                    usleep((useconds_t)d * 1000U);
+                    if (!g_shutdown_requested) {
+                        char *proxy_argv[] = {proxy_bin, "--state-dir", state_arg, "--port", "8555", "--offline", NULL};
+                        proxy_pid = spawn_pinned(1, 3, 0, proxy_bin, proxy_argv);
+                    }
                 }
             } else if (exited == net_pid) {
                 net_pid = -1;
@@ -485,6 +689,23 @@ int main(int argc, char **argv) {
                 tty2_pid = -1;
             }
         }
+
+        if (getpid() == 1 && !test_mode) {
+            struct timespec now = {0, 0};
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (wdt_fd >= 0 && (now.tv_sec - last_wdt_ping.tv_sec) >= 10) {
+                (void)ioctl(wdt_fd, WDIOC_KEEPALIVE, 0);
+                last_wdt_ping = now;
+            }
+            if ((now.tv_sec - last_bat_check.tv_sec) >= 30) {
+                last_bat_check = now;
+                if (check_battery_critical()) {
+                    log_boot("5s-init: critical battery (<=5%%, discharging); initiating clean shutdown");
+                    g_shutdown_requested = 1;
+                }
+            }
+        }
+
         usleep(20000);
     }
 
@@ -504,6 +725,10 @@ int main(int argc, char **argv) {
     if (proxy_pid > 0) kill(proxy_pid, SIGTERM);
     if (tty2_pid > 0) kill(tty2_pid, SIGTERM);
 
+    if (pwr_tid_started) {
+        (void)pthread_join(pwr_tid, NULL);
+    }
+
     usleep(50000);
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
 
@@ -512,13 +737,25 @@ int main(int argc, char **argv) {
         (void)run_sync_cmd(usb_log_bin, sync_argv);
     }
 
+    if (wdt_fd >= 0) {
+        ssize_t wn = write(wdt_fd, "V", 1);
+        (void)wn;
+        close(wdt_fd);
+    }
+
     sync();
     if (getpid() == 1 && !test_mode) {
+        char reb_path[PATH_MAX + 64];
+        snprintf(reb_path, sizeof(reb_path), "%.4000s/reboot_requested", state_dir);
+        int do_reboot = (access(reb_path, F_OK) == 0);
+        if (do_reboot) {
+            unlink(reb_path);
+        }
         (void)umount("/boot/efi");
         (void)mount(NULL, "/mnt/5s-backing", NULL, MS_REMOUNT | MS_RDONLY, NULL);
         (void)mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
         sync();
-        reboot(RB_POWER_OFF);
+        reboot(do_reboot ? RB_AUTOBOOT : RB_POWER_OFF);
     }
     return 0;
 }

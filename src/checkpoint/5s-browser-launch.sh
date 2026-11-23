@@ -82,8 +82,6 @@ BASE_CHROMIUM_FLAGS=(
   "--process-per-site"
   "--js-flags=--max-old-space-size=768"
   "--v8-cache-options=code"
-  "--disk-cache-dir=${STATE_DIR}/chromium_cache"
-  "--user-data-dir=${STATE_DIR}/chromium_profile"
   "--password-store=basic"
   "--use-mock-keychain"
   "--alsa-output-device=default"
@@ -106,6 +104,43 @@ else
   BASE_CHROMIUM_FLAGS+=("--disable-extensions")
 fi
 
+# Load KEYBOARD_LAYOUT, TIMEZONE, DEBUG_TTY from wifi.txt if present
+DEBUG_VT_SWITCH=0
+if grep -qiE '(^| )5s\.debug=1( |$)' /proc/cmdline 2>/dev/null; then
+  DEBUG_VT_SWITCH=1
+fi
+for _cfg_cand in "$STATE_DIR/wifi.txt" "/boot/efi/wifi.txt" "/boot/efi/WIFI.TXT"; do
+  if [[ -f "$_cfg_cand" ]]; then
+    while IFS= read -r _raw_ln || [[ -n "$_raw_ln" ]]; do
+      _ln="${_raw_ln//$'\r'/}"
+      [[ -z "$_ln" || "$_ln" == \#* || "$_ln" != *=* ]] && continue
+      _k="${_ln%%=*}"
+      _v="${_ln#*=}"
+      _k="$(printf '%s' "$_k" | tr '[:lower:]' '[:upper:]' | xargs)"
+      _v="$(printf '%s' "$_v" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
+      case "$_k" in
+        KEYBOARD_LAYOUT)
+          if [[ -n "$_v" ]]; then
+            export XKB_DEFAULT_LAYOUT="$_v"
+          fi
+          ;;
+        TIMEZONE)
+          if [[ -n "$_v" ]]; then
+            export TZ="$_v"
+          fi
+          ;;
+        DEBUG_TTY)
+          case "${_v,,}" in
+            1|true|yes|on) DEBUG_VT_SWITCH=1 ;;
+          esac
+          ;;
+      esac
+    done < "$_cfg_cand"
+    break
+  fi
+done
+
+export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-ch}"
 export XDG_VTNR="${XDG_VTNR:-1}"
 export WLR_LIBINPUT_NO_DEVICES="${WLR_LIBINPUT_NO_DEVICES:-1}"
 export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
@@ -134,7 +169,8 @@ if [[ "$(id -u)" -eq 0 ]]; then
     chmod 1777 /tmp /tmp/.X11-unix
     chown "${RUN_UID}:${RUN_GID}" "$XDG_RUNTIME_DIR"
     chmod 0700 "$XDG_RUNTIME_DIR"
-    for _dir in "$HOME" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile"; do
+    mkdir -p "$STATE_DIR/profiles"
+    for _dir in "$HOME" "$STATE_DIR/chromium_cache" "$STATE_DIR/chromium_profile" "$STATE_DIR/profiles"; do
       if [[ "$(stat -c %u "$_dir" 2>/dev/null || echo -1)" != "$RUN_UID" ]]; then
         chown -R "${RUN_UID}:${RUN_GID}" "$_dir"
       fi
@@ -236,27 +272,61 @@ run_cage_tier() {
   if [[ ! -w /run ]]; then
     cage_log="$STATE_DIR/logs/cage-${tier}.log"
   fi
-  local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@" "${PROXY_URL}/app")
+  local tier_flags=("${BASE_CHROMIUM_FLAGS[@]}" "$@")
+  local cage_flags=(-d)
+  if [[ "$DEBUG_VT_SWITCH" == "1" ]]; then
+    cage_flags+=(-s)
+  fi
 
-  rm -f "${STATE_DIR}/chromium_profile/Singleton"* 2>/dev/null || true
   log_msg "5s-browser: launching tier '${tier}' (${CHROMIUM_BIN}) -> ${cage_log}"
 
   # shellcheck disable=SC2016
   local wrapper='
-    bin="$1"
-    shift
-    "$bin" "$@"
-    rc=$?
-    echo "5s-browser: chromium exited with code $rc" >&2
-    exit "$rc"
+    state_dir="$1"
+    proxy_url="$2"
+    bin="$3"
+    shift 3
+    while true; do
+      prof_id="p1"
+      if [ -f "$state_dir/active_profile" ]; then
+        prof_id=$(tr -d "[:space:]" < "$state_dir/active_profile" 2>/dev/null || echo "p1")
+      fi
+      case "$prof_id" in
+        p1|p2|p3|p4|p5) ;;
+        *) prof_id="p1" ;;
+      esac
+      if [ "$prof_id" = "p1" ]; then
+        prof_dir="$state_dir/chromium_profile"
+        cache_dir="$state_dir/chromium_cache"
+      else
+        prof_dir="$state_dir/profiles/$prof_id/chromium_profile"
+        cache_dir="$state_dir/profiles/$prof_id/chromium_cache"
+      fi
+      mkdir -p "$prof_dir" "$cache_dir"
+      rm -f "$prof_dir/Singleton"* 2>/dev/null || true
+      rm -f "$state_dir/profile_switch_requested"
+      "$bin" "$@" "--user-data-dir=$prof_dir" "--disk-cache-dir=$cache_dir" "${proxy_url}/app" &
+      cpid=$!
+      echo "$cpid" > "$state_dir/chromium_pid"
+      wait "$cpid"
+      rc=$?
+      rm -f "$state_dir/chromium_pid"
+      if [ -f "$state_dir/profile_switch_requested" ]; then
+        rm -f "$state_dir/profile_switch_requested"
+        echo "5s-browser: switching family profile..." >&2
+        continue
+      fi
+      echo "5s-browser: chromium exited with code $rc" >&2
+      exit "$rc"
+    done
   '
 
   set +e
   if [[ "$(id -u)" -eq 0 && -n "$RUN_UID" ]] && command -v setpriv >/dev/null 2>&1; then
     setpriv --reuid="$RUN_UID" --regid="$RUN_GID" --init-groups \
-      /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
+      /usr/bin/cage "${cage_flags[@]}" -- /bin/sh -c "$wrapper" _ "$STATE_DIR" "$PROXY_URL" "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
   else
-    /usr/bin/cage -d -s -- /bin/sh -c "$wrapper" _ "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
+    /usr/bin/cage "${cage_flags[@]}" -- /bin/sh -c "$wrapper" _ "$STATE_DIR" "$PROXY_URL" "$CHROMIUM_BIN" "${tier_flags[@]}" >"$cage_log" 2>&1 &
   fi
   CAGE_PID=$!
 

@@ -36,10 +36,16 @@ BIN_DIR="${BIN_DIR:-$SCRIPT_DIR}"
 curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/disc/stop" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 curl -fsS -m 1 -X POST "${PROXY_URL}/__5s__/snapshot" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 
-# 2. Capture 1024x600 RGB565 framebuffer (<= 40ms)
+# 2. Capture framebuffer (<= 40ms) and save per-profile copy if active_profile is set
 SPLASH_BIN="$BIN_DIR/5s-fb-splash"
 if [[ -x "$SPLASH_BIN" ]]; then
   "$SPLASH_BIN" --capture "$STATE_DIR/last_frame.fb"
+  if [[ -f "$STATE_DIR/active_profile" ]]; then
+    ACTIVE_PROF="$(tr -d '[:space:]' < "$STATE_DIR/active_profile" 2>/dev/null || true)"
+    if [[ "$ACTIVE_PROF" =~ ^p[1-5]$ && -f "$STATE_DIR/last_frame.fb" ]]; then
+      cp -f "$STATE_DIR/last_frame.fb" "$STATE_DIR/last_frame_${ACTIVE_PROF}.fb" 2>/dev/null || true
+    fi
+  fi
 fi
 
 # 3. Save wlan0 lease & DNS cache (<= 40ms)

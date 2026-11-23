@@ -73,6 +73,9 @@ chmod 0644 "$DEB_ROOT/opt/5s-browser/ext/"*
 
 cp "$ROOT_DIR/src/config/grub-5s.cfg" "$DEB_ROOT/opt/5s-browser/config/grub-5s.cfg"
 cp "$ROOT_DIR/src/config/asound-5s.conf" "$DEB_ROOT/opt/5s-browser/config/asound-5s.conf"
+mkdir -p "$DEB_ROOT/etc/chromium/policies/managed"
+cp "$ROOT_DIR/src/config/chromium-policy.json" "$DEB_ROOT/etc/chromium/policies/managed/5s-family.json"
+chmod 0644 "$DEB_ROOT/etc/chromium/policies/managed/5s-family.json"
 cp "$ROOT_DIR/VERSION" "$DEB_ROOT/opt/5s-browser/VERSION"
 chmod 0644 "$DEB_ROOT/opt/5s-browser/VERSION"
 cp "$ROOT_DIR/HOWTO.md" "$DEB_ROOT/usr/share/doc/5s-browser/HOWTO.md"

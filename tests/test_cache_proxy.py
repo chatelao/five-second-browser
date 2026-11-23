@@ -317,7 +317,68 @@ def main() -> None:
                 assert "Connect to Wi-Fi" not in disc_only_html
                 assert 'id="pane-disc" class="pane active"' in disc_only_html
 
-            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync + app-log + /diag + feature toggles verified")
+            # 3. Family profiles (up to 5 members, PIN check, switch, reset, delete) & hardware controls
+            def post_json(path, payload):
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{proxy_port}{path}",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req) as r:
+                    return r.getcode(), json.loads(r.read().decode("utf-8"))
+
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/profiles") as resp:
+                pdata = json.loads(resp.read().decode("utf-8"))
+                assert pdata["max_profiles"] == 5
+                assert len(pdata["profiles"]) == 1
+                assert pdata["active_id"] == "p1"
+
+            for idx, (nm, pin) in enumerate([("Mama", "1234"), ("Papa", ""), ("Kind1", ""), ("Kind2", "4321")], start=2):
+                code, res = post_json("/__5s__/profiles/save", {"name": nm, "pin": pin})
+                assert code == 200 and res["ok"] is True
+                assert len(res["state"]["profiles"]) == idx
+
+            # 6th profile must be rejected
+            try:
+                post_json("/__5s__/profiles/save", {"name": "Extra"})
+                raise AssertionError("Expected 400 when exceeding 5 family profiles")
+            except urllib.error.HTTPError as err:
+                assert err.code == 400
+
+            # Switch to PIN-protected profile p2 with wrong PIN -> 403
+            try:
+                post_json("/__5s__/profiles/switch", {"id": "p2", "pin": "9999"})
+                raise AssertionError("Expected 403 for invalid PIN")
+            except urllib.error.HTTPError as err:
+                assert err.code == 403
+
+            # Switch to p2 with correct PIN -> 200 and active_profile updated
+            code, sw_res = post_json("/__5s__/profiles/switch", {"id": "p2", "pin": "1234"})
+            assert code == 200 and sw_res["ok"] is True
+            assert sw_res["state"]["active_id"] == "p2"
+            assert open(os.path.join(tmp_dir, "active_profile"), "r").read().strip() == "p2"
+            assert os.path.isfile(os.path.join(tmp_dir, "profile_switch_requested"))
+
+            # Reset & delete profile
+            code, rst_res = post_json("/__5s__/profiles/reset", {"id": "p2"})
+            assert code == 200 and rst_res["ok"] is True
+            code, del_res = post_json("/__5s__/profiles/delete", {"id": "p5"})
+            assert code == 200 and len(del_res["state"]["profiles"]) == 4
+
+            # Hardware status & controls
+            with urllib.request.urlopen(f"http://127.0.0.1:{proxy_port}/__5s__/hw/status") as resp:
+                hw = json.loads(resp.read().decode("utf-8"))
+                assert "battery" in hw
+                assert "volume" in hw and "brightness" in hw
+            code, v_res = post_json("/__5s__/hw/volume", {"percent": 65})
+            assert code == 200 and v_res["volume"] == 65
+            code, b_res = post_json("/__5s__/hw/brightness", {"percent": 70})
+            assert code == 200 and b_res["brightness"] == 70
+            code, p_res = post_json("/__5s__/hw/power", {"action": "reboot"})
+            assert code == 200 and p_res["ok"] is True
+
+            print(f"test_cache_proxy: /app={app_ms:.2f}ms, offline HITs <15ms, live sync + app-log + /diag + feature toggles + 5 family profiles + HW controls verified")
         finally:
             proc2.terminate()
             proc2.wait(timeout=3)

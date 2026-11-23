@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import html as html_lib
 import json
 import os
 import queue
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -68,6 +70,7 @@ class ProxyState:
         self.sse_clients: list[queue.Queue] = []
         self.watch_urls: list[str] = []
         self._init_db()
+        self._init_profiles()
         self.disc_manager = DiscManager(state_dir=self.state_dir)
         if self.get_features()["disc"]:
             self.disc_manager.start_monitor(self.broadcast_disc)
@@ -133,6 +136,374 @@ class ProxyState:
                     pass
                 break
         return features
+
+    # --- Family Profiles (up to 5 members) ---
+    MAX_PROFILES = 5
+    PROFILE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6"]
+
+    @staticmethod
+    def _hash_pin(pin: str) -> str:
+        clean = pin.strip()
+        if not clean:
+            return ""
+        return hashlib.sha256(f"5s-pin:{clean}".encode("utf-8")).hexdigest()
+
+    def _profiles_path(self) -> str:
+        return os.path.join(self.state_dir, "profiles.json")
+
+    def _active_profile_path(self) -> str:
+        return os.path.join(self.state_dir, "active_profile")
+
+    def _init_profiles(self) -> None:
+        pfile = self._profiles_path()
+        if not os.path.isfile(pfile):
+            names: list[str] = []
+            for cand in (
+                os.path.join(self.state_dir, "wifi.txt"),
+                "/boot/efi/wifi.txt",
+                "/boot/efi/WIFI.TXT",
+            ):
+                if os.path.isfile(cand):
+                    try:
+                        with open(cand, "r", encoding="utf-8", errors="replace") as f:
+                            for raw_line in f:
+                                line = raw_line.strip()
+                                if not line or line.startswith("#") or "=" not in line:
+                                    continue
+                                k, v = line.split("=", 1)
+                                if k.strip().upper() == "PROFILES":
+                                    names = [x.strip() for x in v.split(",") if x.strip()][: self.MAX_PROFILES]
+                                    break
+                    except Exception:
+                        pass
+                    if names:
+                        break
+            if not names:
+                names = ["Standard"]
+            profiles = []
+            for idx, nm in enumerate(names):
+                profiles.append(
+                    {
+                        "id": f"p{idx + 1}",
+                        "name": nm[:24],
+                        "color": self.PROFILE_COLORS[idx % len(self.PROFILE_COLORS)],
+                        "pin_hash": "",
+                        "features": None,
+                    }
+                )
+            self._save_profiles_raw(profiles)
+        if not os.path.isfile(self._active_profile_path()):
+            profiles = self._load_profiles_raw()
+            first_id = profiles[0]["id"] if profiles else "p1"
+            self._write_active_profile_id(first_id)
+
+    def _load_profiles_raw(self) -> list[dict]:
+        pfile = self._profiles_path()
+        try:
+            with open(pfile, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and data:
+                return data[: self.MAX_PROFILES]
+        except Exception:
+            pass
+        return [{"id": "p1", "name": "Standard", "color": "#3b82f6", "pin_hash": "", "features": None}]
+
+    def _save_profiles_raw(self, profiles: list[dict]) -> None:
+        pfile = self._profiles_path()
+        tmp = pfile + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(profiles[: self.MAX_PROFILES], f, indent=2)
+        os.replace(tmp, pfile)
+
+    def _write_active_profile_id(self, profile_id: str) -> None:
+        ap = self._active_profile_path()
+        tmp = ap + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(profile_id.strip() + "\n")
+        os.replace(tmp, ap)
+
+    def get_active_profile_id(self) -> str:
+        try:
+            with open(self._active_profile_path(), "r", encoding="utf-8") as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except Exception:
+            pass
+        return "p1"
+
+    def get_profiles_public(self) -> dict:
+        with self.lock:
+            raw = self._load_profiles_raw()
+            active_id = self.get_active_profile_id()
+        pub = []
+        active_obj = None
+        for p in raw:
+            item = {
+                "id": p.get("id", "p1"),
+                "name": p.get("name", "Standard"),
+                "color": p.get("color", "#3b82f6"),
+                "has_pin": bool(p.get("pin_hash")),
+                "features": p.get("features"),
+            }
+            if item["id"] == active_id:
+                active_obj = item
+            pub.append(item)
+        if active_obj is None and pub:
+            active_obj = pub[0]
+            active_id = pub[0]["id"]
+        return {
+            "active_id": active_id,
+            "active_profile": active_obj,
+            "profiles": pub,
+            "max_profiles": self.MAX_PROFILES,
+        }
+
+    def save_profile(
+        self,
+        profile_id: str | None,
+        name: str,
+        color: str | None = None,
+        pin: str | None = None,
+        clear_pin: bool = False,
+        features: dict | None = None,
+    ) -> tuple[bool, str, dict | None]:
+        clean_name = name.strip()[:24]
+        if not clean_name:
+            return False, "Profile name required", None
+        with self.lock:
+            profiles = self._load_profiles_raw()
+            target = None
+            if profile_id:
+                for p in profiles:
+                    if p.get("id") == profile_id:
+                        target = p
+                        break
+            if target is not None:
+                target["name"] = clean_name
+                if color and re.match(r"^#[0-9a-fA-F]{6}$", color.strip()):
+                    target["color"] = color.strip()
+                if clear_pin:
+                    target["pin_hash"] = ""
+                elif pin is not None and pin.strip():
+                    if not re.match(r"^\d{4}$", pin.strip()):
+                        return False, "PIN must be 4 digits", None
+                    target["pin_hash"] = self._hash_pin(pin)
+                if isinstance(features, dict):
+                    target["features"] = {
+                        "gmail": features.get("gmail", True) is not False,
+                        "youtube": features.get("youtube", True) is not False,
+                        "disc": features.get("disc", True) is not False,
+                    }
+            else:
+                if len(profiles) >= self.MAX_PROFILES:
+                    return False, f"Maximum of {self.MAX_PROFILES} family profiles reached", None
+                existing_ids = {p.get("id") for p in profiles}
+                new_id = None
+                for i in range(1, self.MAX_PROFILES + 1):
+                    cand = f"p{i}"
+                    if cand not in existing_ids:
+                        new_id = cand
+                        break
+                if not new_id:
+                    return False, "No profile slot available", None
+                pin_hash = ""
+                if pin is not None and pin.strip():
+                    if not re.match(r"^\d{4}$", pin.strip()):
+                        return False, "PIN must be 4 digits", None
+                    pin_hash = self._hash_pin(pin)
+                idx = len(profiles)
+                target = {
+                    "id": new_id,
+                    "name": clean_name,
+                    "color": (color.strip() if color and re.match(r"^#[0-9a-fA-F]{6}$", color.strip()) else self.PROFILE_COLORS[idx % len(self.PROFILE_COLORS)]),
+                    "pin_hash": pin_hash,
+                    "features": (
+                        {
+                            "gmail": features.get("gmail", True) is not False,
+                            "youtube": features.get("youtube", True) is not False,
+                            "disc": features.get("disc", True) is not False,
+                        }
+                        if isinstance(features, dict)
+                        else None
+                    ),
+                }
+                profiles.append(target)
+            self._save_profiles_raw(profiles)
+        return True, "ok", {"id": target["id"], "name": target["name"], "color": target["color"], "has_pin": bool(target.get("pin_hash"))}
+
+    def delete_profile(self, profile_id: str) -> tuple[bool, str]:
+        with self.lock:
+            profiles = self._load_profiles_raw()
+            if len(profiles) <= 1:
+                return False, "Cannot delete the last profile"
+            new_profiles = [p for p in profiles if p.get("id") != profile_id]
+            if len(new_profiles) == len(profiles):
+                return False, "Profile not found"
+            self._save_profiles_raw(new_profiles)
+            if self.get_active_profile_id() == profile_id:
+                self._write_active_profile_id(new_profiles[0]["id"])
+        prof_dir = os.path.join(self.state_dir, "profiles", profile_id)
+        if os.path.isdir(prof_dir):
+            shutil.rmtree(prof_dir, ignore_errors=True)
+        return True, "ok"
+
+    def switch_profile(self, profile_id: str, pin: str = "") -> tuple[bool, str]:
+        with self.lock:
+            profiles = self._load_profiles_raw()
+            target = None
+            for p in profiles:
+                if p.get("id") == profile_id:
+                    target = p
+                    break
+            if target is None:
+                return False, "Profile not found"
+            expected_hash = target.get("pin_hash", "")
+            if expected_hash and self._hash_pin(pin) != expected_hash:
+                return False, "Invalid PIN"
+            self._write_active_profile_id(profile_id)
+        req_file = os.path.join(self.state_dir, "profile_switch_requested")
+        with open(req_file, "w", encoding="utf-8") as f:
+            f.write(profile_id + "\n")
+        self.log_proxy("info", f"profile switch requested -> {profile_id} ({target.get('name')})")
+        if os.environ.get("MOCK_MODE", "0") != "1":
+            pid_file = os.path.join(self.state_dir, "chromium_pid")
+            if os.path.isfile(pid_file):
+                try:
+                    with open(pid_file, "r", encoding="utf-8") as pf:
+                        cpid = int(pf.read().strip())
+                    os.kill(cpid, 15)
+                except Exception:
+                    pass
+        return True, "switching"
+
+    def reset_profile(self, profile_id: str) -> tuple[bool, str]:
+        if not re.match(r"^p[1-5]$", profile_id):
+            return False, "Invalid profile id"
+        if profile_id == "p1":
+            pdir = os.path.join(self.state_dir, "chromium_profile")
+        else:
+            pdir = os.path.join(self.state_dir, "profiles", profile_id, "chromium_profile")
+        if os.path.isdir(pdir):
+            shutil.rmtree(pdir, ignore_errors=True)
+            os.makedirs(pdir, exist_ok=True)
+        fb = os.path.join(self.state_dir, f"last_frame_{profile_id}.fb")
+        if os.path.isfile(fb):
+            try:
+                os.remove(fb)
+            except OSError:
+                pass
+        return True, "reset"
+
+    # --- Laptop Hardware & Overlay Controls ---
+    def get_battery_info(self) -> dict | None:
+        if os.environ.get("MOCK_MODE", "0") == "1":
+            return {"present": True, "percent": 85, "status": "Discharging"}
+        ps_dir = "/sys/class/power_supply"
+        if not os.path.isdir(ps_dir):
+            return None
+        try:
+            for name in sorted(os.listdir(ps_dir)):
+                if not name.startswith("BAT"):
+                    continue
+                cap_path = os.path.join(ps_dir, name, "capacity")
+                st_path = os.path.join(ps_dir, name, "status")
+                if os.path.isfile(cap_path):
+                    with open(cap_path, "r", encoding="utf-8") as f:
+                        pct = int(f.read().strip())
+                    st = "Unknown"
+                    if os.path.isfile(st_path):
+                        with open(st_path, "r", encoding="utf-8") as f:
+                            st = f.read().strip()
+                    return {"present": True, "percent": max(0, min(100, pct)), "status": st}
+        except Exception:
+            pass
+        return None
+
+    def get_overlay_usage_pct(self) -> int | None:
+        target = "/mnt/5s-backing" if os.path.ismount("/mnt/5s-backing") else self.state_dir
+        try:
+            st = os.statvfs(target)
+            if st.f_blocks > 0:
+                used = st.f_blocks - st.f_bfree
+                return int(round((used / st.f_blocks) * 100))
+        except Exception:
+            pass
+        return None
+
+    def get_hw_status(self) -> dict:
+        vol = 80
+        bri = 80
+        if os.environ.get("MOCK_MODE", "0") != "1":
+            try:
+                res = subprocess.run(["amixer", "get", "Master"], capture_output=True, text=True, timeout=1.5, check=False)
+                m = re.search(r"\[(\d{1,3})%\]", res.stdout or "")
+                if m:
+                    vol = max(0, min(100, int(m.group(1))))
+            except Exception:
+                pass
+            bl_dir = "/sys/class/backlight"
+            if os.path.isdir(bl_dir):
+                try:
+                    for name in sorted(os.listdir(bl_dir)):
+                        cur_p = os.path.join(bl_dir, name, "brightness")
+                        max_p = os.path.join(bl_dir, name, "max_brightness")
+                        if os.path.isfile(cur_p) and os.path.isfile(max_p):
+                            cur_v = int(open(cur_p, "r").read().strip())
+                            max_v = max(1, int(open(max_p, "r").read().strip()))
+                            bri = max(1, min(100, int(round((cur_v / max_v) * 100))))
+                            break
+                except Exception:
+                    pass
+        return {
+            "battery": self.get_battery_info(),
+            "volume": vol,
+            "brightness": bri,
+            "overlay_usage_pct": self.get_overlay_usage_pct(),
+        }
+
+    def set_volume(self, pct: int) -> tuple[bool, int]:
+        pct = max(0, min(100, int(pct)))
+        if os.environ.get("MOCK_MODE", "0") != "1" and shutil.which("amixer"):
+            try:
+                subprocess.run(["amixer", "-q", "sset", "Master", f"{pct}%", "unmute"], timeout=1.5, check=False)
+            except Exception:
+                return False, pct
+        return True, pct
+
+    def set_brightness(self, pct: int) -> tuple[bool, int]:
+        pct = max(5, min(100, int(pct)))
+        if os.environ.get("MOCK_MODE", "0") != "1":
+            bl_dir = "/sys/class/backlight"
+            if os.path.isdir(bl_dir):
+                try:
+                    for name in sorted(os.listdir(bl_dir)):
+                        cur_p = os.path.join(bl_dir, name, "brightness")
+                        max_p = os.path.join(bl_dir, name, "max_brightness")
+                        if os.path.isfile(cur_p) and os.path.isfile(max_p):
+                            max_v = max(1, int(open(max_p, "r").read().strip()))
+                            val = max(1, int(round((pct / 100.0) * max_v)))
+                            with open(cur_p, "w", encoding="utf-8") as f:
+                                f.write(str(val))
+                            return True, pct
+                except Exception:
+                    return False, pct
+        return True, pct
+
+    def trigger_power(self, action: str) -> tuple[bool, str]:
+        if action not in ("poweroff", "reboot"):
+            return False, "Invalid action"
+        self.log_proxy("info", f"power action requested: {action}")
+        if os.environ.get("MOCK_MODE", "0") == "1" or not os.path.exists("/run/5s-boot-marks"):
+            return True, action
+        if action == "reboot":
+            with open(os.path.join(self.state_dir, "reboot_requested"), "w", encoding="utf-8") as f:
+                f.write("1\n")
+        try:
+            os.kill(1, 15)
+        except Exception as exc:
+            return False, str(exc)
+        return True, action
 
     def scan_wifi(self) -> list[dict]:
         if os.environ.get("MOCK_MODE", "0") == "1":
@@ -1113,8 +1484,19 @@ def make_handler(state: ProxyState):
                 self._send(200, "application/json", payload)
                 return
 
+            if parsed.path == "/__5s__/profiles":
+                payload = json.dumps(state.get_profiles_public()).encode("utf-8")
+                self._send(200, "application/json", payload)
+                return
+
+            if parsed.path == "/__5s__/hw/status":
+                payload = json.dumps(state.get_hw_status()).encode("utf-8")
+                self._send(200, "application/json", payload)
+                return
+
             if parsed.path == "/__5s__/status":
                 wifi = state.get_wifi_info(allow_subprocess=True)
+                prof_info = state.get_profiles_public()
                 payload = json.dumps(
                     {
                         "online": state.online,
@@ -1129,6 +1511,8 @@ def make_handler(state: ProxyState):
                         "internet_ok": state.internet_ok,
                         "net_error": state.net_error,
                         "features": state.get_features(),
+                        "active_profile": prof_info.get("active_profile"),
+                        "battery": state.get_battery_info(),
                     }
                 ).encode("utf-8")
                 self._send(200, "application/json", payload)
@@ -1263,6 +1647,87 @@ def make_handler(state: ProxyState):
                     "application/json",
                     json.dumps({"ok": ok, "message": msg, "status": state.disc_manager.probe()}).encode("utf-8"),
                 )
+                return
+            if self.path == "/__5s__/profiles/save":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                ok, msg, prof = state.save_profile(
+                    data.get("id"),
+                    str(data.get("name", "")),
+                    data.get("color"),
+                    data.get("pin"),
+                    bool(data.get("clear_pin", False)),
+                    data.get("features") if isinstance(data.get("features"), dict) else None,
+                )
+                self._send(
+                    200 if ok else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "error": None if ok else msg, "profile": prof, "state": state.get_profiles_public()}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/profiles/delete":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                ok, msg = state.delete_profile(str(data.get("id", "")))
+                self._send(
+                    200 if ok else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "error": None if ok else msg, "state": state.get_profiles_public()}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/profiles/switch":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                ok, msg = state.switch_profile(str(data.get("id", "")), str(data.get("pin", "")))
+                self._send(
+                    200 if ok else 403 if msg == "Invalid PIN" else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "error": None if ok else msg, "state": state.get_profiles_public()}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/profiles/reset":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                ok, msg = state.reset_profile(str(data.get("id", "")))
+                self._send(
+                    200 if ok else 400,
+                    "application/json",
+                    json.dumps({"ok": ok, "error": None if ok else msg}).encode("utf-8"),
+                )
+                return
+            if self.path == "/__5s__/hw/volume":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                    pct = int(data.get("percent", 80))
+                except Exception:
+                    pct = 80
+                ok, val = state.set_volume(pct)
+                self._send(200 if ok else 500, "application/json", json.dumps({"ok": ok, "volume": val}).encode("utf-8"))
+                return
+            if self.path == "/__5s__/hw/brightness":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                    pct = int(data.get("percent", 80))
+                except Exception:
+                    pct = 80
+                ok, val = state.set_brightness(pct)
+                self._send(200 if ok else 500, "application/json", json.dumps({"ok": ok, "brightness": val}).encode("utf-8"))
+                return
+            if self.path == "/__5s__/hw/power":
+                try:
+                    data = json.loads(raw.decode("utf-8") or "{}")
+                except Exception:
+                    data = {}
+                ok, msg = state.trigger_power(str(data.get("action", "")))
+                self._send(200 if ok else 400, "application/json", json.dumps({"ok": ok, "action": msg}).encode("utf-8"))
                 return
             if self.path == "/__5s__/snapshot":
                 try:

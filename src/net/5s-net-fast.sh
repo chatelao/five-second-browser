@@ -311,7 +311,14 @@ wait_for_wlan_if() {
 }
 
 ensure_iwd_running() {
-  if [[ -x /usr/libexec/iwd ]] && ! pidof iwd >/dev/null 2>&1; then
+  if [[ ! -x /usr/libexec/iwd ]]; then
+    return 0
+  fi
+  (
+    flock -w 5 9 || true
+    if iwctl device list >/dev/null 2>&1 || pgrep -x iwd >/dev/null 2>&1; then
+      exit 0
+    fi
     mkdir -p /var/lib/iwd /etc/iwd
     if [[ ! -f /etc/iwd/main.conf ]] || ! grep -q 'EnableNetworkConfiguration=true' /etc/iwd/main.conf 2>/dev/null; then
       cat > /etc/iwd/main.conf <<'EOF'
@@ -328,7 +335,7 @@ EOF
       fi
       sleep 0.1
     done
-  fi
+  ) 9>/run/5s-iwd.lock
 }
 
 scan_and_connect_wifi() {
@@ -445,7 +452,32 @@ CACHED_IP=${cur_ip}
 CACHED_GW=${cur_gw}
 CACHED_SSID=${ssid}
 EOF
+  sync_clock_background
   return 0
+}
+
+sync_clock_background() {
+  if [[ "$MOCK_MODE" == "1" ]]; then
+    return 0
+  fi
+  (
+    local cur_year
+    cur_year="$(date -u +%Y 2>/dev/null || echo 1970)"
+    # Try sntp / ntpdate if installed, otherwise fall back to HTTPS Date header
+    if command -v sntp >/dev/null 2>&1; then
+      if timeout 4 sntp -S pool.ntp.org >/dev/null 2>&1; then
+        usb_log "network" "clock synced via sntp (pool.ntp.org)"
+        exit 0
+      fi
+    fi
+    if [[ "$cur_year" -lt 2025 ]] && command -v curl >/dev/null 2>&1; then
+      local http_date
+      http_date="$(curl -fsSI --max-time 4 -k https://www.google.com 2>/dev/null | awk -F': ' 'tolower($1)=="date"{print $2; exit}' | tr -d '\r' || true)"
+      if [[ -n "$http_date" ]] && date -u -s "$http_date" >/dev/null 2>&1; then
+        usb_log "network" "clock synced via HTTPS Date header: $http_date"
+      fi
+    fi
+  ) >/dev/null 2>&1 &
 }
 
 do_boot() {

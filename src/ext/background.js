@@ -77,6 +77,15 @@ async function pollProxyOnline() {
     const res = await fetch(`${PROXY_BASE}/__5s__/status`);
     if (!res.ok) return;
     const st = await res.json();
+    latestStatus = {
+      online: !!st.online,
+      ssid: st.ssid || "",
+      signal_percent: st.signal_percent !== undefined ? st.signal_percent : null,
+      signal_dbm: st.signal_dbm !== undefined ? st.signal_dbm : null,
+      net_error: st.net_error || "",
+      active_profile: st.active_profile || null,
+      battery: st.battery || null
+    };
     if (st.features && typeof st.features === "object") {
       enabledFeatures = {
         gmail: st.features.gmail !== false,
@@ -123,15 +132,36 @@ async function pollProxyOnline() {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.type === "get_features") {
+  if (!msg || !msg.type) return false;
+  if (msg.type === "get_features") {
     sendResponse({ features: enabledFeatures });
     return false;
   }
-  if (msg && msg.type === "get_status") {
+  if (msg.type === "get_status") {
     sendResponse({ status: latestStatus });
     return false;
   }
-  if (msg && msg.type === "switch_tab" && msg.tab) {
+  if (msg.type === "proxy_get" && msg.path) {
+    fetch(`${PROXY_BASE}${msg.path}`)
+      .then((r) => r.json())
+      .then((data) => sendResponse({ ok: true, data: data }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "proxy_post" && msg.path) {
+    fetch(`${PROXY_BASE}${msg.path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msg.body || {})
+    })
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        sendResponse({ ok: r.ok, status: r.status, data: data });
+      })
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "switch_tab" && msg.tab) {
     if (sender && sender.tab && sender.tab.url) {
       if (sender.tab.url.startsWith(PROXY_BASE) && !sender.tab.url.includes("tab=disc")) {
         tabIds.gmail = sender.tab.id;

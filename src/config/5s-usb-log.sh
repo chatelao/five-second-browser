@@ -103,8 +103,11 @@ capture_pre_init_timing() {
     echo "--- kernel dmesg gaps >= 0.20s (first 20s) ---"
     if command -v dmesg >/dev/null 2>&1; then
       dmesg 2>/dev/null | awk '
-        match($0, /^\[[[:space:]]*([0-9]+\.[0-9]+)\]/, m) {
-          t = m[1] + 0.0
+        /^\[[[:space:]]*[0-9]+\.[0-9]+\]/ {
+          s = $0
+          sub(/^\[[[:space:]]*/, "", s)
+          sub(/\].*$/, "", s)
+          t = s + 0.0
           if (t > 20.0) exit
           if (have_prev && (t - prev_t) >= 0.20) {
             printf "+%6.3fs  (%6.3fs -> %6.3fs)  %s\n", (t - prev_t), prev_t, t, $0
