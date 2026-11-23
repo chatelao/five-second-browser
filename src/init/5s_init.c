@@ -312,10 +312,15 @@ static int read_int_file(const char *path, int *out) {
     close(fd);
     if (n <= 0) return -1;
     buf[n] = '\0';
-    char *end = NULL;
-    long val = strtol(buf, &end, 10);
-    if (end == buf) return -1;
-    *out = (int)val;
+    int i = 0;
+    while (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\n' || buf[i] == '\r') i++;
+    if (buf[i] < '0' || buf[i] > '9') return -1;
+    int val = 0;
+    while (buf[i] >= '0' && buf[i] <= '9') {
+        val = val * 10 + (buf[i] - '0');
+        i++;
+    }
+    *out = val;
     return 0;
 }
 

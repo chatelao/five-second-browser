@@ -45,8 +45,13 @@ check-isa: $(BIN_DIR)/5s-fb-splash $(BIN_DIR)/5s-init
 			echo "ERROR: Forbidden AVX/AVX2/BMI instruction found in $$bin"; \
 			exit 1; \
 		fi; \
+		if objdump -T "$$bin" | grep -qE 'GLIBC_2\.(3[7-9]|[4-9][0-9])'; then \
+			echo "ERROR: Binary $$bin requires glibc > 2.36 (incompatible with Debian 12 Bookworm)"; \
+			objdump -T "$$bin" | grep -E 'GLIBC_2\.(3[7-9]|[4-9][0-9])'; \
+			exit 1; \
+		fi; \
 	done
-	@echo "[PASS] Pentium 3825U ISA check passed (no AVX/AVX2/BMI instructions)"
+	@echo "[PASS] Pentium 3825U ISA & Debian 12 glibc ABI check passed"
 
 test: build check-isa
 	bash tests/run_all.sh
